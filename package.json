@@ -1,0 +1,50 @@
+{
+  "name": "deepshui-translator",
+  "version": "1.0.0",
+  "description": "deepshui-translator - PDF 划词翻译工具",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --linux deb",
+    "dist:appimage": "electron-builder --linux AppImage"
+  },
+  "author": "QvShui",
+  "license": "MIT",
+  "homepage": "https://github.com/deepshui/translator",
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.deepshui.translator",
+    "productName": "deepshui-translator",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "category": "Office",
+      "icon": "assets/icon.png",
+      "maintainer": "QvShui <2251074434@qq.com>"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils"
+      ],
+      "afterInstall": "build/after-install.tpl"
+    }
+  },
+  "allowScripts": {
+    "electron@35.7.5": true
+  }
+}
