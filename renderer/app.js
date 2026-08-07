@@ -128,6 +128,69 @@
   const engineTab = document.getElementById('engine-tab');
   const aiTab = document.getElementById('ai-tab');
 
+  // ── Markdown 渲染（marked + DOMPurify + KaTeX）─────────
+  // AI 输出含 Markdown/LaTeX，渲染为富文本
+  function renderMarkdownTo(el, text) {
+    if (!text) {
+      el.innerHTML = '';
+      return;
+    }
+    try {
+      // 0. 保护 LaTeX 分隔符（marked 会吞掉 \( 的反斜杠，导致 KaTeX 无法识别）
+      const mathPlaceholders = [];
+      const protectedText = text.replace(
+        /(\\\[[\s\S]*?\\\])|(\\\([\s\S]*?\\\))|(\$\$[\s\S]*?\$\$)|(\$[^$\n]+?\$)/g,
+        (m) => { mathPlaceholders.push(m); return `\u0000MATH${mathPlaceholders.length - 1}\u0000`; }
+      );
+      // 1. Markdown → HTML（禁用原始 HTML 直通，防注入）
+      const rawHtml = marked.parse(protectedText, { breaks: true, gfm: true });
+      // 1.5 还原公式
+      const restoredHtml = rawHtml.replace(/\u0000MATH(\d+)\u0000/g, (_, i) => mathPlaceholders[+i]);
+      // 2. DOMPurify 消毒
+      const safeHtml = DOMPurify.sanitize(restoredHtml);
+      el.innerHTML = safeHtml;
+      // 3. KaTeX 渲染公式（\(...\)、$...$、\[...\]）
+      try {
+        renderMathInElement(el, {
+          delimiters: [
+            { left: '\\\\[', right: '\\\\]', display: true },
+            { left: '\\\(', right: '\\\)', display: false },
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+          ],
+          throwOnError: false,
+        });
+      } catch (e) { /* 公式渲染失败不影响正文 */ }
+    } catch (e) {
+      // 渲染失败回退纯文本
+      el.textContent = text;
+    }
+  }
+
+  // 流式内容累积 + 节流渲染（避免每 chunk 重渲染卡顿）
+  const mdTimers = {};
+  function appendAiContent(el, chunk) {
+    el.__raw = (el.__raw || '') + chunk;
+    clearTimeout(mdTimers[el.id]);
+    mdTimers[el.id] = setTimeout(() => {
+      renderMarkdownTo(el, el.__raw);
+      // 跟随最新内容滚动到底部
+      el.scrollTop = el.scrollHeight;
+    }, 350);
+  }
+
+  function finalizeAiContent(el) {
+    clearTimeout(mdTimers[el.id]);
+    renderMarkdownTo(el, el.__raw || '');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function clearAiContent(el) {
+    clearTimeout(mdTimers[el.id]);
+    el.__raw = '';
+    el.innerHTML = '';
+  }
+
   // ── AI 事件监听（主进程流式推送）─────────
   window.deepshui.onAiEvent(({ requestId, kind, type, text, seconds, usage, message }) => {
     if (kind === 'explain') handleExplainEvent(type, text, seconds, usage, message);
@@ -168,7 +231,7 @@
         aiExplainStatus.className = 'ai-status';
         break;
       case 'content':
-        aiExplainContent.textContent += text;
+        appendAiContent(aiExplainContent, text);
         break;
       case 'done':
       case 'end':
@@ -177,10 +240,11 @@
         }
         aiExplainRunning = false;
         aiExplainStatus.className = 'ai-status';
+        finalizeAiContent(aiExplainContent);
         // 不隔离模式：解释结果并入问答历史（上下文连续）
         if (aiExplainShares && explainPendingText) {
           askHistory.push({ role: 'user', content: '（划词解释）' + explainPendingText });
-          askHistory.push({ role: 'assistant', content: aiExplainContent.textContent });
+          askHistory.push({ role: 'assistant', content: aiExplainContent.__raw || aiExplainContent.textContent });
           aiExplainShares = false;
           explainPendingText = '';
         }
@@ -189,6 +253,7 @@
         aiExplainRunning = false;
         aiExplainStatus.textContent = '';
         aiExplainStatus.className = 'ai-status';
+        clearAiContent(aiExplainContent);
         aiExplainContent.textContent = '⚠️ ' + message;
         break;
     }
@@ -199,7 +264,7 @@
     if (aiExplainRunning) return;
     aiExplainRunning = true;
     explainPendingText = text;
-    aiExplainContent.textContent = '';
+    clearAiContent(aiExplainContent);
     aiExplainStatus.textContent = '';
     aiExplainStatus.className = 'ai-status';
     aiExplain.classList.remove('hidden');
@@ -248,7 +313,7 @@
         aiAskStatus.className = 'ai-status';
         break;
       case 'content':
-        aiAskContent.textContent += text;
+        appendAiContent(aiAskContent, text);
         askCurrentAnswer += text;
         break;
       case 'done':
@@ -260,6 +325,7 @@
         aiAskStatus.className = 'ai-status';
         aiAskSend.disabled = false;
         aiAskBox.disabled = false;
+        finalizeAiContent(aiAskContent);
         // 只保存本轮回答到历史（修复历史重复累积）
         askHistory.push({ role: 'assistant', content: askCurrentAnswer });
         askCurrentAnswer = '';
@@ -271,7 +337,7 @@
         aiAskSend.disabled = false;
         aiAskBox.disabled = false;
         if (message !== '已取消') {
-          aiAskContent.textContent += '\n⚠️ ' + message;
+          appendAiContent(aiAskContent, '\n⚠️ ' + message);
         }
         break;
     }
@@ -287,9 +353,10 @@
     // 追加用户问题（初始总结消息也算历史第一条）
     askHistory.push({ role: 'user', content: q });
     askCurrentAnswer = '';
-    aiAskContent.textContent += isInitial
+    aiAskContent.__raw = (aiAskContent.__raw || '') + (isInitial
       ? '\n\n**AI 总结**: '
-      : `\n\n**你**: ${q}\n\n**AI**: `;
+      : `\n\n**你**: ${q}\n\n**AI**: `);
+    renderMarkdownTo(aiAskContent, aiAskContent.__raw);
     aiAskBox.value = '';
     aiAskStatus.textContent = '';
 
@@ -521,10 +588,11 @@
       // 重置问答历史（新文档新会话）
       askHistory = [];
       askCurrentAnswer = '';
-      aiAskContent.textContent = '';
+      clearAiContent(aiAskContent);
       aiAskStatus.textContent = '';
 
       if (!fullText.trim()) {
+        clearAiContent(aiAskContent);
         aiAskContent.textContent = '⚠️ 该 PDF 无可提取文本（可能是扫描版），全文问答不可用';
         return;
       }
@@ -884,7 +952,7 @@
 
   // 清屏：仅清空显示内容，上下文（askHistory）保留
   aiAskClear.addEventListener('click', () => {
-    aiAskContent.textContent = '';
+    clearAiContent(aiAskContent);
     aiAskStatus.textContent = '';
     aiAskStatus.className = 'ai-status';
     // 重置输入框高度（BUG-14）
@@ -896,7 +964,7 @@
     cancelAsk();
     askHistory = [];
     askCurrentAnswer = '';
-    aiAskContent.textContent = '';
+    clearAiContent(aiAskContent);
     aiAskStatus.textContent = '';
     aiAskStatus.className = 'ai-status';
     aiAskBox.style.height = 'auto';
@@ -905,12 +973,15 @@
 
     const ai = currentConfig.ai || {};
     if (fullText && ai.apiKey && ai.model) {
+      clearAiContent(aiAskContent);
       aiAskContent.textContent = '已重置对话，正在重新喂入全文...';
       // 重新喂全文：全文通过 system 注入（sendAsk 自动带上），只需发总结指令
       sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
     } else if (fullText) {
+      clearAiContent(aiAskContent);
       aiAskContent.textContent = '已重置对话。配置 AI 引擎后提问会自动带上全文。';
     } else {
+      clearAiContent(aiAskContent);
       aiAskContent.textContent = '已重置对话。打开 PDF 后可进行全文问答。';
     }
   });
