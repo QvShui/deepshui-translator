@@ -13,7 +13,7 @@
 - 📋 一键复制译文
 - ⚙️ 设置面板（各引擎凭证独立管理、测试连接）
 
-## 🚀 快速开始
+## 🚀 快速开始(仅针对Debian用户)
 
 ```bash
 # 1. 安装依赖
@@ -56,22 +56,12 @@ npm start
 | Windows | `npm run dist:win` | `.exe` (NSIS) |
 | macOS | `npm run dist:mac` | `.dmg` |
 
-> - Windows/macOS 图标由 `assets/icon.png` 自动转换，无需额外准备。
-> - macOS 的 `.dmg` 必须在 macOS 上构建；Windows `.exe` 可在 Windows 上构建（Linux 交叉构建需 wine）。
-> - 已发布的 Linux 安装包见 [`release/`](./release)。
+> - 已发布的安装包见 [`release/`](./release)。
 
 ### 安装
 
 ```bash
 sudo dpkg -i release/deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
-```
-
-### 国内网络加速
-
-```bash
-npm config set registry https://registry.npmmirror.com
-ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
-ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ npm run dist
 ```
 
 ## 🗂️ 项目结构
