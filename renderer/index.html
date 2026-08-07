@@ -85,6 +85,28 @@
         <div id="translate-error" class="hidden">
           <p id="error-text"></p>
         </div>
+
+        <!-- AI 解释 -->
+        <div id="ai-explain" class="hidden">
+          <div class="ai-header">
+            <span>AI 解释</span>
+            <span id="ai-explain-status" class="ai-status"></span>
+          </div>
+          <div id="ai-explain-content" class="ai-content"></div>
+        </div>
+
+        <!-- AI 问答 -->
+        <div id="ai-ask" class="hidden">
+          <div class="ai-header">
+            <span>AI 问答</span>
+            <span id="ai-ask-status" class="ai-status"></span>
+          </div>
+          <div id="ai-ask-content" class="ai-content"></div>
+          <div class="ai-ask-input">
+            <input id="ai-ask-box" type="text" placeholder="向 AI 提问...">
+            <button id="ai-ask-send">发送</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -96,36 +118,96 @@
         <span>⚙️ 设置</span>
         <button id="btn-settings-close">✕</button>
       </div>
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="engine-tab">翻译引擎</button>
+        <button class="settings-tab" data-tab="ai-tab">AI 引擎</button>
+      </div>
       <div class="settings-body">
-        <h3>翻译引擎</h3>
-        <p class="settings-hint">选择引擎并填写对应凭证，凭证仅保存在本机用户目录</p>
-        <div class="form-row">
-          <label>默认引擎</label>
-          <select id="set-engine">
-            <option value="youdao">有道翻译</option>
-            <option value="baidu">百度翻译</option>
-            <option value="xunfei">讯飞翻译</option>
-            <option value="deepl">DeepL</option>
-            <option value="google">Google 翻译</option>
-          </select>
+        <div id="engine-tab">
+          <h3>翻译引擎</h3>
+          <p class="settings-hint">选择引擎并填写对应凭证，凭证仅保存在本机用户目录</p>
+          <div class="form-row">
+            <label>默认引擎</label>
+            <select id="set-engine">
+              <option value="youdao">有道翻译</option>
+              <option value="baidu">百度翻译</option>
+              <option value="xunfei">讯飞翻译</option>
+              <option value="deepl">DeepL</option>
+              <option value="google">Google 翻译</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>默认目标语言</label>
+            <select id="set-lang">
+              <option value="zh-CN">中文</option>
+              <option value="en">英文</option>
+              <option value="ja">日语</option>
+              <option value="ko">韩语</option>
+              <option value="fr">法语</option>
+              <option value="de">德语</option>
+            </select>
+          </div>
+          <div id="engine-fields"></div>
+          <p class="settings-hint" id="engine-help"></p>
+          <div id="settings-status"></div>
+          <div class="settings-actions">
+            <button id="btn-settings-test">测试连接</button>
+            <button id="btn-settings-save">保存</button>
+          </div>
         </div>
-        <div class="form-row">
-          <label>默认目标语言</label>
-          <select id="set-lang">
-            <option value="zh-CN">中文</option>
-            <option value="en">英文</option>
-            <option value="ja">日语</option>
-            <option value="ko">韩语</option>
-            <option value="fr">法语</option>
-            <option value="de">德语</option>
-          </select>
-        </div>
-        <div id="engine-fields"></div>
-        <p class="settings-hint" id="engine-help"></p>
-        <div id="settings-status"></div>
-        <div class="settings-actions">
-          <button id="btn-settings-test">测试连接</button>
-          <button id="btn-settings-save">保存</button>
+
+        <div id="ai-tab" class="hidden">
+          <h3>AI 引擎（DeepSeek）</h3>
+          <p class="settings-hint">用于 AI 解释和 AI 问答，不影响翻译。注册: https://platform.deepseek.com/api_keys</p>
+          <div class="form-row">
+            <label>API Key</label>
+            <input id="set-ai-key" type="password" placeholder="DeepSeek API Key">
+          </div>
+          <div class="form-row">
+            <label>模型</label>
+            <div class="ai-model-row">
+              <input id="set-ai-model" type="text" list="ai-model-list" placeholder="deepseek-v4-flash">
+              <datalist id="ai-model-list">
+                <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+              </datalist>
+              <button id="btn-ai-refresh" title="从 API 拉取最新模型">🔄</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>思考模式</label>
+            <select id="set-ai-thinking">
+              <option value="on">开启</option>
+              <option value="off">关闭</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>推理程度</label>
+            <select id="set-ai-effort">
+              <option value="low">low</option>
+              <option value="high" selected>high</option>
+              <option value="max">max</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>显示 AI 解释</label>
+            <select id="set-ai-explain">
+              <option value="on">开启</option>
+              <option value="off">关闭</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>显示 AI 问答</label>
+            <select id="set-ai-ask">
+              <option value="on">开启</option>
+              <option value="off">关闭</option>
+            </select>
+          </div>
+          <div id="ai-settings-status"></div>
+          <div class="settings-actions">
+            <button id="btn-ai-test">测试 AI</button>
+            <button id="btn-settings-save">保存</button>
+          </div>
         </div>
       </div>
     </div>

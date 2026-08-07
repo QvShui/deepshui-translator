@@ -22,6 +22,14 @@ contextBridge.exposeInMainWorld('deepshui', {
   // 保存有道配置
   saveConfig: (cfg) => ipcRenderer.invoke('save-config', cfg),
 
+  // AI 引擎
+  aiModels: () => ipcRenderer.invoke('ai-models'),
+  aiChat: (requestId, messages, kind) => ipcRenderer.invoke('ai-chat', { requestId, messages, kind }),
+  aiCancel: (requestId) => ipcRenderer.invoke('ai-cancel', requestId),
+  onAiEvent: (callback) => {
+    ipcRenderer.on('ai-event', (event, data) => callback(data));
+  },
+
   // 监听：主进程通知打开 PDF
   onOpenPdf: (callback) => {
     ipcRenderer.on('open-pdf', (event, filePath) => callback(filePath));

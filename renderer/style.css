@@ -387,6 +387,133 @@ html, body {
   border-color: var(--bg-accent) !important;
 }
 
+/* ── AI 区块 ─────────────────────────────── */
+#ai-explain, #ai-ask {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.ai-status {
+  font-weight: normal;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.ai-status.thinking {
+  color: var(--bg-accent);
+}
+
+.ai-content {
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.ai-content:empty::before {
+  content: '暂无内容';
+  color: var(--text-dim);
+}
+
+.ai-ask-input {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ai-ask-input input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.ai-ask-input input:focus {
+  border-color: var(--bg-accent);
+}
+
+.ai-ask-input button {
+  border: 1px solid var(--bg-accent);
+  background: var(--bg-accent);
+  color: #fff;
+  border-radius: 5px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ai-ask-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 设置面板 tabs ───────────────────────── */
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 10px 0;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+}
+
+.settings-tab:hover {
+  color: var(--text-main);
+}
+
+.settings-tab.active {
+  color: var(--bg-accent);
+  border-bottom-color: var(--bg-accent);
+  font-weight: 600;
+}
+
+.ai-model-row {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+
+.ai-model-row input {
+  flex: 1;
+}
+
+.ai-model-row button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ai-model-row button:hover {
+  background: var(--bg);
+}
+
 /* 滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 5px; }

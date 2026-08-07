@@ -77,6 +77,236 @@
   let translateTimer = null; // 防抖
   const fieldInputs = {};    // engine -> { key: inputEl }
 
+  // AI 状态
+  let aiExplainRunning = false;  // 解释请求进行中
+  let aiAskRunning = false;      // 问答请求进行中
+  let askHistory = [];           // 问答多轮历史（不包含划线内容）
+  let currentSelection = '';     // 当前划线文本
+  let aiExplainTimer = null;     // 解释防抖
+
+  // AI DOM
+  const aiExplain = document.getElementById('ai-explain');
+  const aiExplainStatus = document.getElementById('ai-explain-status');
+  const aiExplainContent = document.getElementById('ai-explain-content');
+  const aiAsk = document.getElementById('ai-ask');
+  const aiAskStatus = document.getElementById('ai-ask-status');
+  const aiAskContent = document.getElementById('ai-ask-content');
+  const aiAskBox = document.getElementById('ai-ask-box');
+  const aiAskSend = document.getElementById('ai-ask-send');
+
+  // 设置面板 AI DOM
+  const setAiKey = document.getElementById('set-ai-key');
+  const setAiModel = document.getElementById('set-ai-model');
+  const btnAiRefresh = document.getElementById('btn-ai-refresh');
+  const setAiThinking = document.getElementById('set-ai-thinking');
+  const setAiEffort = document.getElementById('set-ai-effort');
+  const setAiExplain = document.getElementById('set-ai-explain');
+  const setAiAsk = document.getElementById('set-ai-ask');
+  const aiSettingsStatus = document.getElementById('ai-settings-status');
+  const btnAiTest = document.getElementById('btn-ai-test');
+
+  // 设置 tabs
+  const settingsTabs = document.querySelectorAll('.settings-tab');
+  const engineTab = document.getElementById('engine-tab');
+  const aiTab = document.getElementById('ai-tab');
+
+  // ── AI 事件监听（主进程流式推送）─────────
+  window.deepshui.onAiEvent(({ requestId, kind, type, text, seconds, usage, message }) => {
+    if (kind === 'explain') handleExplainEvent(type, text, seconds, usage, message);
+    else if (kind === 'ask') handleAskEvent(type, text, seconds, usage, message);
+  });
+
+  // ── AI 解释 ───────────────────────────────
+  function handleExplainEvent(type, text, seconds, usage, message) {
+    switch (type) {
+      case 'think-start':
+        aiExplainStatus.textContent = '正在思考...';
+        aiExplainStatus.className = 'ai-status thinking';
+        break;
+      case 'think-done':
+        aiExplainStatus.textContent = `已思考（用时 ${seconds}s）`;
+        aiExplainStatus.className = 'ai-status';
+        break;
+      case 'content':
+        aiExplainContent.textContent += text;
+        break;
+      case 'done':
+      case 'end':
+        if (aiExplainStatus.textContent === '正在思考...') {
+          aiExplainStatus.textContent = '已思考';
+        }
+        aiExplainRunning = false;
+        aiExplainStatus.className = 'ai-status';
+        break;
+      case 'error':
+        aiExplainRunning = false;
+        aiExplainStatus.textContent = '';
+        aiExplainStatus.className = 'ai-status';
+        aiExplainContent.textContent = '⚠️ ' + message;
+        break;
+    }
+  }
+
+  // 发起 AI 解释（注入划线文本）
+  async function startExplain(text) {
+    if (!aiExplainRunning) {
+      aiExplainRunning = true;
+      aiExplainContent.textContent = '';
+      aiExplainStatus.textContent = '';
+      aiExplainStatus.className = 'ai-status';
+      aiExplain.classList.remove('hidden');
+      const messages = [
+        { role: 'system', content: '你是一个学术论文阅读助手。用户会划选一段论文文本，请用中文解释这段内容，包括：核心意思、关键术语的含义、必要的背景知识。回答要简洁清晰。' },
+        { role: 'user', content: text },
+      ];
+      await window.deepshui.aiChat('explain', messages, 'explain');
+    }
+  }
+
+  // 打断 AI 解释（划线变化时调用）
+  function cancelExplain() {
+    if (aiExplainRunning) {
+      window.deepshui.aiCancel('explain');
+      aiExplainRunning = false;
+      aiExplainStatus.textContent = '';
+      aiExplainStatus.className = 'ai-status';
+    }
+  }
+
+  // ── AI 问答（不注入划线文本，纯网页版 DeepSeek）──
+  function handleAskEvent(type, text, seconds, usage, message) {
+    switch (type) {
+      case 'think-start':
+        aiAskStatus.textContent = '正在思考...';
+        aiAskStatus.className = 'ai-status thinking';
+        break;
+      case 'think-done':
+        aiAskStatus.textContent = `已思考（用时 ${seconds}s）`;
+        aiAskStatus.className = 'ai-status';
+        break;
+      case 'content':
+        aiAskContent.textContent += text;
+        break;
+      case 'done':
+      case 'end':
+        if (aiAskStatus.textContent === '正在思考...') {
+          aiAskStatus.textContent = '已思考';
+        }
+        aiAskRunning = false;
+        aiAskStatus.className = 'ai-status';
+        aiAskSend.disabled = false;
+        aiAskBox.disabled = false;
+        // 保存回答到多轮历史
+        askHistory.push({ role: 'assistant', content: aiAskContent.textContent });
+        break;
+      case 'error':
+        aiAskRunning = false;
+        aiAskStatus.textContent = '';
+        aiAskStatus.className = 'ai-status';
+        aiAskSend.disabled = false;
+        aiAskBox.disabled = false;
+        if (message !== '已取消') {
+          aiAskContent.textContent += '\n⚠️ ' + message;
+        }
+        break;
+    }
+  }
+
+  async function sendAsk() {
+    const q = aiAskBox.value.trim();
+    if (!q || aiAskRunning) return;
+    aiAskRunning = true;
+    aiAskSend.disabled = true;
+    aiAskBox.disabled = true;
+
+    // 追加用户问题（不包含划线内容）
+    askHistory.push({ role: 'user', content: q });
+    aiAskContent.textContent += `\n
+**你**: ${q}\n\n**AI**: `;
+    aiAskBox.value = '';
+    aiAskStatus.textContent = '';
+
+    const messages = [
+      { role: 'system', content: '你是一个乐于助人的 AI 助手，请用中文回答用户的问题。' },
+      ...askHistory,
+    ];
+    await window.deepshui.aiChat('ask', messages, 'ask');
+  }
+
+  // 打断问答（新提问时替换旧回答）
+  function cancelAsk() {
+    if (aiAskRunning) {
+      window.deepshui.aiCancel('ask');
+      aiAskRunning = false;
+      aiAskStatus.textContent = '';
+      aiAskStatus.className = 'ai-status';
+      aiAskSend.disabled = false;
+      aiAskBox.disabled = false;
+    }
+  }
+
+  // ── AI 设置面板 ───────────────────────────
+  function applyAiVisibility() {
+    const ai = currentConfig.ai || {};
+    if (ai.showExplain) aiExplain.classList.remove('hidden');
+    else { aiExplain.classList.add('hidden'); cancelExplain(); }
+    if (ai.showAsk) aiAsk.classList.remove('hidden');
+    else { aiAsk.classList.add('hidden'); cancelAsk(); }
+  }
+
+  async function refreshAiModels() {
+    btnAiRefresh.disabled = true;
+    aiSettingsStatus.textContent = '拉取模型列表...';
+    aiSettingsStatus.className = '';
+    const res = await window.deepshui.aiModels();
+    btnAiRefresh.disabled = false;
+    if (res.ok && res.models && res.models.length) {
+      const list = document.getElementById('ai-model-list');
+      list.innerHTML = '';
+      for (const m of res.models) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        list.appendChild(opt);
+      }
+      aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型: ${res.models.join(', ')}`;
+      aiSettingsStatus.className = 'ok';
+    } else {
+      aiSettingsStatus.textContent = `❌ ${res.error || '拉取失败'}`;
+      aiSettingsStatus.className = 'err';
+    }
+  }
+
+  async function testAi() {
+    const cfg = {
+      ...currentConfig,
+      ai: {
+        ...currentConfig.ai,
+        apiKey: setAiKey.value.trim(),
+        model: setAiModel.value.trim() || 'deepseek-v4-flash',
+      },
+    };
+    if (!cfg.ai.apiKey) {
+      aiSettingsStatus.textContent = '⚠️ 请先填写 DeepSeek API Key';
+      aiSettingsStatus.className = 'err';
+      return;
+    }
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+    aiSettingsStatus.textContent = '测试中（需几秒）...';
+    aiSettingsStatus.className = '';
+    const res = await window.deepshui.aiChat('test', [
+      { role: 'system', content: '你是一个乐于助人的 AI 助手。' },
+      { role: 'user', content: '回复两个字：正常' },
+    ], 'explain');
+    if (!res.ok) {
+      aiSettingsStatus.textContent = `❌ ${res.error}`;
+      aiSettingsStatus.className = 'err';
+    } else {
+      aiSettingsStatus.textContent = '✅ 请求已发送，检查右侧栏 AI 解释区';
+      aiSettingsStatus.className = 'ok';
+    }
+  }
+
   // ── 设置面板：动态凭证表单 ───────────────
   function renderEngineFields(engine) {
     engineFields.innerHTML = '';
@@ -129,6 +359,16 @@
     setLang.value = cfg.targetLang || 'zh-CN';
     renderEngineFields(setEngine.value);
 
+    // AI 配置回填
+    const ai = cfg.ai || {};
+    setAiKey.value = ai.apiKey || '';
+    setAiModel.value = ai.model || 'deepseek-v4-flash';
+    setAiThinking.value = ai.thinkingEnabled === false ? 'off' : 'on';
+    setAiEffort.value = ai.reasoningEffort || 'high';
+    setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
+    setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
+    applyAiVisibility();
+
     // 检查默认引擎凭证
     const cred = cfg[cfg.engine] || {};
     const def = ENGINE_FIELDS[cfg.engine] || [];
@@ -153,10 +393,16 @@
     PdfViewer.loadPdf(bytes, res.name);
   }
 
-  // ── 划词翻译 ─────────────────────────────
+  // ── 划词翻译 + AI 解释联动 ───────────────
   function handleTextSelect(text) {
     if (text.length > 5000) text = text.substring(0, 5000);
+    currentSelection = text;
     showLoading();
+
+    // 划线变化 → 立即打断旧解释
+    if (aiExplainRunning) {
+      cancelExplain();
+    }
 
     clearTimeout(translateTimer);
     translateTimer = setTimeout(async () => {
@@ -170,6 +416,16 @@
         showError(result.error);
       }
     }, 300);
+
+    // AI 解释（若开启且已配置 key）
+    const ai = currentConfig.ai || {};
+    if (ai.showExplain && ai.apiKey) {
+      // 小防抖，避免连续划词频繁请求
+      clearTimeout(aiExplainTimer);
+      aiExplainTimer = setTimeout(() => {
+        startExplain(text);
+      }, 400);
+    }
   }
 
   function showLoading() {
@@ -212,8 +468,20 @@
     setEngine.value = config.engine || 'youdao';
     setLang.value = config.targetLang || 'zh-CN';
     renderEngineFields(setEngine.value);
+
+    // AI 字段回填
+    const ai = config.ai || {};
+    setAiKey.value = ai.apiKey || '';
+    setAiModel.value = ai.model || 'deepseek-v4-flash';
+    setAiThinking.value = ai.thinkingEnabled === false ? 'off' : 'on';
+    setAiEffort.value = ai.reasoningEffort || 'high';
+    setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
+    setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
+
     settingsStatus.textContent = '';
     settingsStatus.className = '';
+    aiSettingsStatus.textContent = '';
+    aiSettingsStatus.className = '';
     settingsOverlay.classList.remove('hidden');
   }
 
@@ -231,6 +499,14 @@
       xunfei: { ...currentConfig.xunfei, ...(setEngine.value === 'xunfei' ? collectCredentials('xunfei') : {}) },
       deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
       google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
+      ai: {
+        apiKey: setAiKey.value.trim(),
+        model: setAiModel.value.trim() || 'deepseek-v4-flash',
+        thinkingEnabled: setAiThinking.value === 'on',
+        reasoningEffort: setAiEffort.value,
+        showExplain: setAiExplain.value === 'on',
+        showAsk: setAiAsk.value === 'on',
+      },
     };
 
     // 校验当前引擎凭证
@@ -250,6 +526,9 @@
     engineSelect.value = cfg.engine;
     settingsStatus.textContent = '✅ 配置已保存';
     settingsStatus.className = 'ok';
+    aiSettingsStatus.textContent = '✅ AI 配置已保存';
+    aiSettingsStatus.className = 'ok';
+    applyAiVisibility();
   }
 
   async function testConnection() {
@@ -312,6 +591,27 @@
   btnSettingsSave.addEventListener('click', saveSettings);
   btnSettingsTest.addEventListener('click', testConnection);
   btnCopy.addEventListener('click', copyResult);
+
+  // 设置面板 tabs 切换
+  settingsTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      settingsTabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const target = tab.dataset.tab;
+      engineTab.classList.toggle('hidden', target !== 'engine-tab');
+      aiTab.classList.toggle('hidden', target !== 'ai-tab');
+    });
+  });
+
+  // AI 设置：刷新模型列表 / 测试
+  btnAiRefresh.addEventListener('click', refreshAiModels);
+  btnAiTest.addEventListener('click', testAi);
+
+  // AI 问答发送
+  aiAskSend.addEventListener('click', sendAsk);
+  aiAskBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendAsk();
+  });
 
   // 设置面板切换引擎 → 动态表单
   setEngine.addEventListener('change', () => renderEngineFields(setEngine.value));

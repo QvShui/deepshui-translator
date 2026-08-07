@@ -18,6 +18,14 @@ const DEFAULT_CONFIG = () => ({
   xunfei: { appid: '', apiKey: '', apiSecret: '' },
   deepl: { apiKey: '' },
   google: { apiKey: '' },
+  ai: {
+    apiKey: '',
+    model: 'deepseek-v4-flash',
+    thinkingEnabled: true,
+    reasoningEffort: 'high',
+    showExplain: true,
+    showAsk: true,
+  },
 });
 
 function getConfigPath() {
@@ -38,6 +46,7 @@ function loadConfig() {
       xunfei: { ...def.xunfei, ...(cfg.xunfei || {}) },
       deepl: { ...def.deepl, ...(cfg.deepl || {}) },
       google: { ...def.google, ...(cfg.google || {}) },
+      ai: { ...def.ai, ...(cfg.ai || {}) },
     };
   } catch {
     return DEFAULT_CONFIG();
@@ -253,6 +262,116 @@ function translateWith(engine, text, from, to, cfg) {
   return def.translate(text, from, to, cred);
 }
 
+// ── DeepSeek AI 引擎（解释/问答，不参与翻译）──────────────
+// OpenAI 兼容: POST https://api.deepseek.com/chat/completions
+// 思考控制: thinking.type (enabled/disabled) + reasoning_effort (low/high/max)
+
+// 拉取可用模型列表
+function deepseekModels(apiKey) {
+  return new Promise((resolve, reject) => {
+    const req = https.get({
+      hostname: 'api.deepseek.com', path: '/models', method: 'GET',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'DeepshuiTranslator/1.1' },
+    }, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          if (j.data && Array.isArray(j.data)) {
+            resolve({ ok: true, models: j.data.map(m => m.id) });
+          } else {
+            resolve({ ok: false, error: j.error?.message || '模型列表响应异常' });
+          }
+        } catch (e) { reject(new Error('模型列表解析失败')); }
+      });
+    });
+    req.on('error', e => reject(new Error(`网络错误: ${e.message}`)));
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('请求超时 (10s)')); });
+  });
+}
+
+// 流式对话：通过 onEvent 回调推送事件
+// onEvent: {type:'thinking',text} | {type:'content',text} | {type:'think-done',seconds}
+//          | {type:'done',usage} | {type:'error',message}
+function deepseekChatStream({ apiKey, model, messages, thinkingEnabled, reasoningEffort, signal, onEvent }) {
+  const body = JSON.stringify({
+    model,
+    messages,
+    stream: true,
+    stream_options: { include_usage: true },
+    thinking: { type: thinkingEnabled ? 'enabled' : 'disabled' },
+    reasoning_effort: reasoningEffort || 'high',
+  });
+
+  const startTime = Date.now();
+  let thinkingActive = false;
+
+  const req = https.request({
+    hostname: 'api.deepseek.com', path: '/chat/completions', method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Length': Buffer.byteLength(body),
+      'User-Agent': 'DeepshuiTranslator/1.1',
+    },
+    signal,
+  }, res => {
+    let buffer = '';
+    res.setEncoding('utf8');
+    res.on('data', chunk => {
+      buffer += chunk;
+      let idx;
+      while ((idx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') {
+          onEvent({ type: 'done' });
+          continue;
+        }
+        try {
+          const j = JSON.parse(payload);
+          const delta = j.choices?.[0]?.delta || {};
+          if (delta.reasoning_content) {
+            if (!thinkingActive) {
+              thinkingActive = true;
+              onEvent({ type: 'think-start' });
+            }
+            onEvent({ type: 'thinking', text: delta.reasoning_content });
+          }
+          if (delta.content) {
+            if (thinkingActive) {
+              thinkingActive = false;
+              onEvent({ type: 'think-done', seconds: ((Date.now() - startTime) / 1000).toFixed(1) });
+            }
+            onEvent({ type: 'content', text: delta.content });
+          }
+          if (j.usage) onEvent({ type: 'usage', usage: j.usage });
+        } catch (e) { /* 忽略无法解析的块 */ }
+      }
+    });
+    res.on('end', () => {
+      if (thinkingActive) {
+        onEvent({ type: 'think-done', seconds: ((Date.now() - startTime) / 1000).toFixed(1) });
+      }
+      onEvent({ type: 'end' });
+    });
+  });
+
+  req.on('error', e => {
+    if (e.name === 'AbortError') {
+      onEvent({ type: 'error', message: '已取消' });
+    } else {
+      onEvent({ type: 'error', message: `网络错误: ${e.message}` });
+    }
+  });
+  req.setTimeout(60000, () => { req.destroy(new Error('请求超时 (60s)')); });
+  req.write(body);
+  req.end();
+}
+
 // ── 窗口管理 ─────────────────────────────────────────────
 let mainWindow = null;
 
@@ -353,6 +472,61 @@ ipcMain.handle('get-config', async () => {
 
 ipcMain.handle('save-config', async (event, cfg) => {
   return saveConfig(cfg);
+});
+
+// ── AI 引擎 IPC ──────────────────────────────────────────
+// 进行中的流式请求表: requestId -> AbortController
+const aiAborters = new Map();
+
+// 拉取 DeepSeek 可用模型列表
+ipcMain.handle('ai-models', async () => {
+  const cfg = loadConfig();
+  const key = cfg.ai.apiKey;
+  if (!key) return { ok: false, error: '未配置 DeepSeek API Key，请到 设置 → AI 引擎 填写' };
+  try {
+    return await deepseekModels(key);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// 发起流式 AI 对话（解释/问答通用），事件通过 webContents.send('ai-event') 推送
+ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
+  const cfg = loadConfig();
+  const ai = cfg.ai;
+  if (!ai.apiKey) return { ok: false, error: '未配置 DeepSeek API Key，请到 设置 → AI 引擎 填写' };
+
+  const sender = event.sender;
+  const ac = new AbortController();
+  aiAborters.set(requestId, ac);
+
+  const emit = (evt) => {
+    if (!sender.isDestroyed()) sender.send('ai-event', { requestId, kind, ...evt });
+  };
+
+  deepseekChatStream({
+    apiKey: ai.apiKey,
+    model: ai.model || 'deepseek-v4-flash',
+    messages,
+    thinkingEnabled: ai.thinkingEnabled !== false,
+    reasoningEffort: ai.reasoningEffort || 'high',
+    signal: ac.signal,
+    onEvent: emit,
+  });
+
+  // 请求结束时清理
+  const cleanup = () => aiAborters.delete(requestId);
+  ac.signal.addEventListener('abort', cleanup, { once: true });
+  setTimeout(cleanup, 90000); // 兜底清理
+
+  return { ok: true, requestId };
+});
+
+// 取消进行中的 AI 请求
+ipcMain.handle('ai-cancel', async (event, requestId) => {
+  const ac = aiAborters.get(requestId);
+  if (ac) ac.abort();
+  return true;
 });
 
 // ── 启动 ─────────────────────────────────────────────────

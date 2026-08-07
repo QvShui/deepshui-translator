@@ -11,7 +11,8 @@
 - 🖱️ 划词即译（自动清洗断词连字符与换行符）
 - 🌐 多引擎支持：有道 / 百度 / 讯飞 / DeepL / Google Cloud（英⇄中，支持日/韩/法/德）
 - 📋 一键复制译文
-- ⚙️ 设置面板（各引擎凭证独立管理、测试连接）
+- ⚙️ 设置面板（各引擎凭证独立管理 + AI 引擎配置）
+- 🤖 AI 引擎（DeepSeek）：AI 解释划选段落、AI 问答（不注入划线内容）
 
 ## 🚀 快速开始(仅针对Debian用户)
 
@@ -63,8 +64,8 @@ npm start
 安装包托管在 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases)（不占用仓库体积）：
 
 ```bash
-wget https://github.com/QvShui/deepshui-translator/releases/download/v1.1.0/deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
-sudo dpkg -i deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
+wget https://github.com/QvShui/deepshui-translator/releases/download/v1.1.0/deepshui-translator_1.2.0_Debian-Trixie_amd64.deb
+sudo dpkg -i deepshui-translator_1.2.0_Debian-Trixie_amd64.deb
 ```
 
 ## 🗂️ 项目结构
