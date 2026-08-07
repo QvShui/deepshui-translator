@@ -20,3 +20,6 @@ Thumbs.db
 # Local config (contains API keys)
 config.json
 youdao_api.csv
+
+# Release binaries (hosted on GitHub Releases)
+release/*.deb
