@@ -95,6 +95,7 @@
   const aiAskSend = document.getElementById('ai-ask-send');
 
   // 设置面板 AI DOM
+  const setAiProvider = document.getElementById('set-ai-provider');
   const setAiKey = document.getElementById('set-ai-key');
   const setAiModel = document.getElementById('set-ai-model');
   const btnAiRefresh = document.getElementById('btn-ai-refresh');
@@ -172,7 +173,7 @@
     }
   }
 
-  // ── AI 问答（不注入划线文本，纯网页版 DeepSeek）──
+  // AI 问答
   function handleAskEvent(type, text, seconds, usage, message) {
     switch (type) {
       case 'think-start':
@@ -255,8 +256,9 @@
 
   // 回填 AI 设置表单
   function fillAiForm(ai) {
+    setAiProvider.value = ai.provider || 'deepseek';
     setAiKey.value = ai.apiKey || '';
-    setAiDeepThink.value = ai.deepThink || 'high';
+    setAiDeepThink.value = ai.deepThink || 'off';
     setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
     setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
     // 模型下拉：有已保存模型则选中，否则空提示
@@ -285,7 +287,7 @@
     btnAiRefresh.disabled = true;
     aiSettingsStatus.textContent = '拉取模型列表...';
     aiSettingsStatus.className = '';
-    const res = await window.deepshui.aiModels();
+    const res = await window.deepshui.aiModels(setAiProvider.value);
     btnAiRefresh.disabled = false;
     if (res.ok && res.models && res.models.length) {
       setAiModel.innerHTML = '';
@@ -403,7 +405,7 @@
     const def = ENGINE_FIELDS[cfg.engine] || [];
     const missing = def.some(f => !cred[f.key]);
     if (missing) {
-      showError(`首次使用：请先在 ⚙️ 设置 中配置 ${ENGINE_LABELS[cfg.engine] || cfg.engine} 的 API 凭证`);
+      showError(`首次使用：请先在 ⚙️ 设置 中配置 翻译引擎 API 凭证`);
     }
   }
 
@@ -523,6 +525,7 @@
       deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
       google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
       ai: {
+        provider: setAiProvider.value,
         apiKey: setAiKey.value.trim(),
         model: setAiModel.value || '',
         deepThink: setAiDeepThink.value,

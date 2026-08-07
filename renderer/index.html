@@ -157,8 +157,14 @@
         </div>
 
         <div id="ai-tab" class="hidden">
-          <h3>AI 引擎（DeepSeek）</h3>
+          <h3>AI 引擎</h3>
           <p class="settings-hint">用于 AI 解释和 AI 问答，不影响翻译</p>
+          <div class="form-row">
+            <label>提供商</label>
+            <select id="set-ai-provider">
+              <option value="deepseek">DeepSeek</option>
+            </select>
+          </div>
           <div class="form-row">
             <label>API Key</label>
             <input id="set-ai-key" type="password" placeholder="粘贴 API Key 后点击右侧刷新拉取模型">
@@ -175,24 +181,24 @@
           <div class="form-row">
             <label>深度思考</label>
             <select id="set-ai-deepthink">
-              <option value="off">关闭</option>
+              <option value="off" selected>关闭</option>
               <option value="low">low</option>
-              <option value="high" selected>high</option>
+              <option value="high">high</option>
               <option value="max">max</option>
             </select>
           </div>
           <div class="form-row">
             <label>显示 AI 解释</label>
             <select id="set-ai-explain">
+              <option value="off" selected>关闭</option>
               <option value="on">开启</option>
-              <option value="off">关闭</option>
             </select>
           </div>
           <div class="form-row">
             <label>显示 AI 问答</label>
             <select id="set-ai-ask">
+              <option value="off" selected>关闭</option>
               <option value="on">开启</option>
-              <option value="off">关闭</option>
             </select>
           </div>
           <div id="ai-settings-status"></div>
