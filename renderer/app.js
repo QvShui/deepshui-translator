@@ -85,6 +85,14 @@
   let aiExplainTimer = null;     // 解释防抖
   let fullText = '';             // 当前 PDF 全文（AI 问答上下文）
   let pdfOpenCounter = 0;        // 防止并发总结
+  let aiExplainShares = false;   // 解释是否并入问答上下文
+  let explainPendingText = '';   // 当前解释对应的段落（并入历史用）
+
+  // 确认框 DOM
+  const confirmOverlay = document.getElementById('confirm-overlay');
+  const btnConfirmCancel = document.getElementById('confirm-cancel');
+  const btnConfirmDiscard = document.getElementById('confirm-discard');
+  const btnConfirmSave = document.getElementById('confirm-save');
 
   // AI DOM
   const aiExplain = document.getElementById('ai-explain');
@@ -105,6 +113,7 @@
   const setAiDeepThink = document.getElementById('set-ai-deepthink');
   const setAiExplain = document.getElementById('set-ai-explain');
   const setAiAsk = document.getElementById('set-ai-ask');
+  const setAiIsolate = document.getElementById('set-ai-isolate');
   const aiSettingsStatus = document.getElementById('ai-settings-status');
   const btnAiTest = document.getElementById('btn-ai-test');
   const btnSettingsSaveAi = document.getElementById('btn-settings-save-ai');
@@ -141,6 +150,13 @@
         }
         aiExplainRunning = false;
         aiExplainStatus.className = 'ai-status';
+        // 不隔离模式：解释结果并入问答历史（上下文连续）
+        if (aiExplainShares && explainPendingText) {
+          askHistory.push({ role: 'user', content: '（划词解释）' + explainPendingText });
+          askHistory.push({ role: 'assistant', content: aiExplainContent.textContent });
+          aiExplainShares = false;
+          explainPendingText = '';
+        }
         break;
       case 'error':
         aiExplainRunning = false;
@@ -151,20 +167,36 @@
     }
   }
 
-  // 发起 AI 解释（注入划线文本）
+  // 发起 AI 解释（默认隔离；关闭隔离时并入问答上下文）
   async function startExplain(text) {
-    if (!aiExplainRunning) {
-      aiExplainRunning = true;
-      aiExplainContent.textContent = '';
-      aiExplainStatus.textContent = '';
-      aiExplainStatus.className = 'ai-status';
-      aiExplain.classList.remove('hidden');
-      const messages = [
+    if (aiExplainRunning) return;
+    aiExplainRunning = true;
+    explainPendingText = text;
+    aiExplainContent.textContent = '';
+    aiExplainStatus.textContent = '';
+    aiExplainStatus.className = 'ai-status';
+    aiExplain.classList.remove('hidden');
+
+    const ai = currentConfig.ai || {};
+    let messages;
+    if (ai.isolateContext === false) {
+      // 不隔离：解释放到问答上下文中运行（全文 + 问答历史 + 划线段落）
+      aiExplainShares = true;
+      messages = [];
+      if (fullText) {
+        messages.push({ role: 'system', content: '以下是用户打开的 PDF 全文，回答问题时请基于这篇文章：\n\n' + fullText });
+      }
+      messages.push({ role: 'system', content: '你是一个乐于助人的 AI 助手，请用中文回答。' });
+      messages.push(...askHistory);
+      messages.push({ role: 'user', content: '请用中文解释下面这段论文文本，包括核心意思、关键术语的含义、必要的背景知识：\n\n' + text });
+    } else {
+      // 隔离（默认）：独立会话，只带划线段落
+      messages = [
         { role: 'system', content: '你是一个学术论文阅读助手。用户会划选一段论文文本，请用中文解释这段内容，包括：核心意思、关键术语的含义、必要的背景知识。回答要简洁清晰。' },
         { role: 'user', content: text },
       ];
-      await window.deepshui.aiChat('explain', messages, 'explain');
     }
+    await window.deepshui.aiChat('explain', messages, 'explain');
   }
 
   // 打断 AI 解释（划线变化时调用）
@@ -271,6 +303,7 @@
     setAiDeepThink.value = ai.deepThink || 'off';
     setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
     setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
+    setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
     // 模型下拉：有已保存模型则选中，否则空提示
     if (ai.model) {
       if (![...setAiModel.options].some(o => o.value === ai.model)) {
@@ -549,10 +582,6 @@
     settingsOverlay.classList.remove('hidden');
   }
 
-  function closeSettings() {
-    settingsOverlay.classList.add('hidden');
-  }
-
   async function saveSettings() {
     // 翻译引擎保存：只更新翻译引擎相关字段，AI 配置原样保留（两者完全独立）
     const cfg = {
@@ -638,11 +667,78 @@
         deepThink: setAiDeepThink.value,
         showExplain: setAiExplain.value === 'on',
         showAsk: setAiAsk.value === 'on',
+        isolateContext: setAiIsolate.value !== 'off',
       },
     };
     await window.deepshui.saveConfig(cfg);
     currentConfig = cfg;
     applyAiVisibility();
+  }
+
+  // 保存全部设置（翻译引擎 + AI，用于「保存并退出」）
+  async function fullSave() {
+    const cfg = {
+      ...currentConfig,
+      engine: setEngine.value,
+      targetLang: setLang.value,
+      youdao: { ...currentConfig.youdao, ...(setEngine.value === 'youdao' ? collectCredentials('youdao') : {}) },
+      baidu: { ...currentConfig.baidu, ...(setEngine.value === 'baidu' ? collectCredentials('baidu') : {}) },
+      xunfei: { ...currentConfig.xunfei, ...(setEngine.value === 'xunfei' ? collectCredentials('xunfei') : {}) },
+      deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
+      google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
+      ai: {
+        provider: setAiProvider.value,
+        apiKey: setAiKey.value.trim(),
+        model: setAiModel.value || '',
+        deepThink: setAiDeepThink.value,
+        showExplain: setAiExplain.value === 'on',
+        showAsk: setAiAsk.value === 'on',
+        isolateContext: setAiIsolate.value !== 'off',
+      },
+    };
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+    targetLang.value = cfg.targetLang;
+    engineSelect.value = cfg.engine;
+    applyAiVisibility();
+  }
+
+  // 检测是否有未保存的更改（翻译引擎表单 + AI 表单 vs 已保存配置）
+  function hasUnsavedChanges() {
+    const ai = currentConfig.ai || {};
+    // AI 表单（自动保存，通常无差异，但 key 未失焦时可能未保存）
+    const aiChanged =
+      setAiKey.value.trim() !== (ai.apiKey || '') ||
+      setAiModel.value !== (ai.model || '') ||
+      setAiDeepThink.value !== (ai.deepThink || 'off') ||
+      (setAiExplain.value === 'on') !== (ai.showExplain !== false) ||
+      (setAiAsk.value === 'on') !== (ai.showAsk !== false) ||
+      (setAiIsolate.value !== 'off') !== (ai.isolateContext !== false);
+    // 翻译引擎表单（手动保存）
+    const engineChanged =
+      setEngine.value !== (currentConfig.engine || 'youdao') ||
+      setLang.value !== (currentConfig.targetLang || 'zh-CN');
+    // 引擎凭证字段
+    let credChanged = false;
+    const fields = ENGINE_FIELDS[setEngine.value] || [];
+    const savedCred = currentConfig[setEngine.value] || {};
+    for (const f of fields) {
+      const input = fieldInputs[setEngine.value]?.[f.key];
+      if (input && input.value.trim() !== (savedCred[f.key] || '')) {
+        credChanged = true;
+        break;
+      }
+    }
+    return aiChanged || engineChanged || credChanged;
+  }
+
+  // 关闭设置：有未保存更改时弹三选项确认
+  function closeSettings() {
+    if (hasUnsavedChanges()) {
+      confirmOverlay.classList.remove('hidden');
+      return;
+    }
+    settingsOverlay.classList.add('hidden');
   }
 
   // ── 事件绑定 ─────────────────────────────
@@ -668,6 +764,18 @@
   btnSettingsSave.addEventListener('click', saveSettings);
   btnSettingsTest.addEventListener('click', testConnection);
   btnCopy.addEventListener('click', copyResult);
+
+  // 未保存确认框
+  btnConfirmCancel.addEventListener('click', () => confirmOverlay.classList.add('hidden'));
+  btnConfirmDiscard.addEventListener('click', () => {
+    confirmOverlay.classList.add('hidden');
+    settingsOverlay.classList.add('hidden');
+  });
+  btnConfirmSave.addEventListener('click', async () => {
+    confirmOverlay.classList.add('hidden');
+    await fullSave();
+    settingsOverlay.classList.add('hidden');
+  });
 
   // 设置面板 tabs 切换
   settingsTabs.forEach(tab => {

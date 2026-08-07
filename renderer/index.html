@@ -204,12 +204,31 @@
               <option value="on">开启</option>
             </select>
           </div>
+          <div class="form-row">
+            <label>隔离解释与问答上下文</label>
+            <select id="set-ai-isolate">
+              <option value="on" selected>开启</option>
+              <option value="off">关闭</option>
+            </select>
+          </div>
           <div id="ai-settings-status"></div>
           <div class="settings-actions">
             <button id="btn-ai-test">测试 AI</button>
             <button id="btn-settings-save-ai">保存</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 未保存确认框 -->
+  <div id="confirm-overlay" class="hidden">
+    <div id="confirm-panel">
+      <p id="confirm-text">有未保存的更改，如何处理？</p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel">取消</button>
+        <button id="confirm-discard">不保存</button>
+        <button id="confirm-save">保存并退出</button>
       </div>
     </div>
   </div>

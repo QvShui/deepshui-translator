@@ -25,6 +25,7 @@ const DEFAULT_CONFIG = () => ({
     deepThink: 'off',   // off | low | high | max（默认关闭）
     showExplain: false,
     showAsk: false,
+    isolateContext: true,  // 隔离解释与问答上下文（默认开启）
   },
 });
 
