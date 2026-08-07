@@ -63,7 +63,7 @@ npm start
 ### 安装
 
 ```bash
-sudo dpkg -i release/deepshui-translator_1.1.0_Debian-Trexie_amd64.deb
+sudo dpkg -i release/deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
 ```
 
 ### 国内网络加速
