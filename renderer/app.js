@@ -516,8 +516,9 @@
   }
 
   async function saveSettings() {
-    // 收集当前引擎凭证，保留其他引擎已保存的
+    // 翻译引擎保存：只更新翻译引擎相关字段，AI 配置原样保留（两者完全独立）
     const cfg = {
+      ...currentConfig,   // 保留 AI 及其它所有字段
       engine: setEngine.value,
       targetLang: setLang.value,
       youdao: { ...currentConfig.youdao, ...(setEngine.value === 'youdao' ? collectCredentials('youdao') : {}) },
@@ -525,14 +526,6 @@
       xunfei: { ...currentConfig.xunfei, ...(setEngine.value === 'xunfei' ? collectCredentials('xunfei') : {}) },
       deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
       google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
-      ai: {
-        provider: setAiProvider.value,
-        apiKey: setAiKey.value.trim(),
-        model: setAiModel.value || '',
-        deepThink: setAiDeepThink.value,
-        showExplain: setAiExplain.value === 'on',
-        showAsk: setAiAsk.value === 'on',
-      },
     };
 
     // 仅当「翻译引擎」tab 激活时才校验翻译引擎凭证；AI tab 保存不受翻译引擎凭证限制
@@ -553,10 +546,8 @@
     // 同步侧边栏
     targetLang.value = cfg.targetLang;
     engineSelect.value = cfg.engine;
-    settingsStatus.textContent = '✅ 配置已保存';
+    settingsStatus.textContent = '✅ 配置已保存（不影响 AI 配置）';
     settingsStatus.className = 'ok';
-    aiSettingsStatus.textContent = '✅ AI 配置已保存';
-    aiSettingsStatus.className = 'ok';
     applyAiVisibility();
   }
 
@@ -571,8 +562,9 @@
       return;
     }
 
-    // 临时保存再测试，保证用新凭证
+    // 临时保存再测试，保证用新凭证（保留 AI 等其它配置）
     const cfg = {
+      ...currentConfig,
       engine: setEngine.value,
       targetLang: setLang.value,
       youdao: { ...currentConfig.youdao },
