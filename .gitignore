@@ -23,3 +23,7 @@ youdao_api.csv
 
 # Release binaries (hosted on GitHub Releases)
 release/*.deb
+
+# API keys (test files)
+test_api_key.txt
+*.key
