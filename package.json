@@ -32,7 +32,7 @@
       ],
       "category": "Office",
       "icon": "assets/icon.png",
-      "maintainer": "QvShui <2262501@mail.dhu.edu.cn>"
+      "maintainer": "QvShui <116477975+QvShui@users.noreply.github.com>"
     },
     "win": {
       "target": ["nsis"],
