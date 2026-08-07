@@ -60,8 +60,11 @@ npm start
 
 ### 安装
 
+安装包托管在 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases)（不占用仓库体积）：
+
 ```bash
-sudo dpkg -i release/deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
+wget https://github.com/QvShui/deepshui-translator/releases/download/v1.1.0/deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
+sudo dpkg -i deepshui-translator_1.1.0_Debian-Trixie_amd64.deb
 ```
 
 ## 🗂️ 项目结构
