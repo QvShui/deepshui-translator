@@ -104,6 +104,7 @@
   const setAiAsk = document.getElementById('set-ai-ask');
   const aiSettingsStatus = document.getElementById('ai-settings-status');
   const btnAiTest = document.getElementById('btn-ai-test');
+  const btnSettingsSaveAi = document.getElementById('btn-settings-save-ai');
 
   // 设置 tabs
   const settingsTabs = document.querySelectorAll('.settings-tab');
@@ -596,6 +597,24 @@
     }
   }
 
+  // 自动保存 AI 设置（表单改动即生效，无需手动保存）
+  async function autoSaveAi() {
+    const cfg = {
+      ...currentConfig,
+      ai: {
+        provider: setAiProvider.value,
+        apiKey: setAiKey.value.trim(),
+        model: setAiModel.value || '',
+        deepThink: setAiDeepThink.value,
+        showExplain: setAiExplain.value === 'on',
+        showAsk: setAiAsk.value === 'on',
+      },
+    };
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+    applyAiVisibility();
+  }
+
   // ── 事件绑定 ─────────────────────────────
   btnOpen.addEventListener('click', openPdfViaDialog);
   btnOpenPlaceholder.addEventListener('click', openPdfViaDialog);
@@ -631,9 +650,21 @@
     });
   });
 
-  // AI 设置：刷新模型列表 / 测试
+  // AI 设置：刷新模型列表 / 测试 / AI 保存按钮
   btnAiRefresh.addEventListener('click', refreshAiModels);
   btnAiTest.addEventListener('click', testAi);
+  btnSettingsSaveAi.addEventListener('click', async () => {
+    await autoSaveAi();
+    aiSettingsStatus.textContent = '✅ AI 配置已保存';
+    aiSettingsStatus.className = 'ok';
+  });
+
+  // AI 表单改动即自动保存（深度思考/显示开关/模型/Key/提供商）
+  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk].forEach(el => {
+    el.addEventListener('change', autoSaveAi);
+  });
+  setAiModel.addEventListener('change', autoSaveAi);
+  setAiKey.addEventListener('change', autoSaveAi); // 失焦时保存
 
   // AI 问答发送
   aiAskSend.addEventListener('click', sendAsk);
