@@ -19,10 +19,10 @@ const DEFAULT_CONFIG = () => ({
   deepl: { apiKey: '' },
   google: { apiKey: '' },
   ai: {
+    provider: 'deepseek',
     apiKey: '',
-    model: 'deepseek-v4-flash',
-    thinkingEnabled: true,
-    reasoningEffort: 'high',
+    model: '',
+    deepThink: 'high',   // off | low | high | max
     showExplain: true,
     showAsk: true,
   },
@@ -46,7 +46,15 @@ function loadConfig() {
       xunfei: { ...def.xunfei, ...(cfg.xunfei || {}) },
       deepl: { ...def.deepl, ...(cfg.deepl || {}) },
       google: { ...def.google, ...(cfg.google || {}) },
-      ai: { ...def.ai, ...(cfg.ai || {}) },
+      ai: (() => {
+        const oldAi = cfg.ai || {};
+        const merged = { ...def.ai, ...oldAi };
+        // 兼容旧配置: thinkingEnabled + reasoningEffort → deepThink
+        if (merged.deepThink === undefined && oldAi.thinkingEnabled !== undefined) {
+          merged.deepThink = oldAi.thinkingEnabled ? (oldAi.reasoningEffort || 'high') : 'off';
+        }
+        return merged;
+      })(),
     };
   } catch {
     return DEFAULT_CONFIG();
@@ -262,16 +270,39 @@ function translateWith(engine, text, from, to, cfg) {
   return def.translate(text, from, to, cred);
 }
 
-// ── DeepSeek AI 引擎（解释/问答，不参与翻译）──────────────
-// OpenAI 兼容: POST https://api.deepseek.com/chat/completions
-// 思考控制: thinking.type (enabled/disabled) + reasoning_effort (low/high/max)
+// ── AI 提供商（可扩展：DeepSeek / OpenAI / Anthropic ...）───
+const AI_PROVIDERS = {
+  deepseek: {
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com',
+    chatPath: '/chat/completions',
+    modelsPath: '/models',
+  },
+  // 未来新增提供商只需在此添加，例如:
+  // openai:   { label: 'OpenAI',   baseUrl: 'https://api.openai.com',      chatPath: '/v1/chat/completions', modelsPath: '/v1/models' },
+};
+
+function getAiProvider(name) {
+  return AI_PROVIDERS[name] || AI_PROVIDERS.deepseek;
+}
+
+function providerEndpoints(provider) {
+  const u = new URL(provider.baseUrl);
+  const base = u.pathname.replace(/\/$/, '');
+  return {
+    hostname: u.hostname,
+    chatPath: base + provider.chatPath,
+    modelsPath: base + provider.modelsPath,
+  };
+}
 
 // 拉取可用模型列表
-function deepseekModels(apiKey) {
+function fetchAiModels(provider, apiKey) {
+  const ep = providerEndpoints(provider);
   return new Promise((resolve, reject) => {
     const req = https.get({
-      hostname: 'api.deepseek.com', path: '/models', method: 'GET',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'DeepshuiTranslator/1.1' },
+      hostname: ep.hostname, path: ep.modelsPath, method: 'GET',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'DeepshuiTranslator/1.2' },
     }, res => {
       let data = '';
       res.on('data', c => data += c);
@@ -294,26 +325,29 @@ function deepseekModels(apiKey) {
 // 流式对话：通过 onEvent 回调推送事件
 // onEvent: {type:'thinking',text} | {type:'content',text} | {type:'think-done',seconds}
 //          | {type:'done',usage} | {type:'error',message}
-function deepseekChatStream({ apiKey, model, messages, thinkingEnabled, reasoningEffort, signal, onEvent }) {
+// deepThink: 'off' | 'low' | 'high' | 'max'
+function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, onEvent }) {
+  const ep = providerEndpoints(provider);
   const body = JSON.stringify({
     model,
     messages,
     stream: true,
     stream_options: { include_usage: true },
-    thinking: { type: thinkingEnabled ? 'enabled' : 'disabled' },
-    reasoning_effort: reasoningEffort || 'high',
+    ...(deepThink && deepThink !== 'off'
+      ? { thinking: { type: 'enabled' }, reasoning_effort: deepThink }
+      : { thinking: { type: 'disabled' } }),
   });
 
   const startTime = Date.now();
   let thinkingActive = false;
 
   const req = https.request({
-    hostname: 'api.deepseek.com', path: '/chat/completions', method: 'POST',
+    hostname: ep.hostname, path: ep.chatPath, method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
       'Content-Length': Buffer.byteLength(body),
-      'User-Agent': 'DeepshuiTranslator/1.1',
+      'User-Agent': 'DeepshuiTranslator/1.2',
     },
     signal,
   }, res => {
@@ -478,13 +512,14 @@ ipcMain.handle('save-config', async (event, cfg) => {
 // 进行中的流式请求表: requestId -> AbortController
 const aiAborters = new Map();
 
-// 拉取 DeepSeek 可用模型列表
-ipcMain.handle('ai-models', async () => {
+// 拉取 AI 提供商可用模型列表
+ipcMain.handle('ai-models', async (event, providerName) => {
   const cfg = loadConfig();
-  const key = cfg.ai.apiKey;
-  if (!key) return { ok: false, error: '未配置 DeepSeek API Key，请到 设置 → AI 引擎 填写' };
+  const ai = cfg.ai;
+  if (!ai.apiKey) return { ok: false, error: '未配置 API Key，请到 设置 → AI 引擎 填写' };
   try {
-    return await deepseekModels(key);
+    const provider = getAiProvider(providerName || ai.provider || 'deepseek');
+    return await fetchAiModels(provider, ai.apiKey);
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -494,7 +529,8 @@ ipcMain.handle('ai-models', async () => {
 ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
   const cfg = loadConfig();
   const ai = cfg.ai;
-  if (!ai.apiKey) return { ok: false, error: '未配置 DeepSeek API Key，请到 设置 → AI 引擎 填写' };
+  if (!ai.apiKey) return { ok: false, error: '未配置 API Key，请到 设置 → AI 引擎 填写' };
+  if (!ai.model) return { ok: false, error: '未选择模型，请到 设置 → AI 引擎 拉取并选择模型' };
 
   const sender = event.sender;
   const ac = new AbortController();
@@ -504,12 +540,12 @@ ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
     if (!sender.isDestroyed()) sender.send('ai-event', { requestId, kind, ...evt });
   };
 
-  deepseekChatStream({
+  aiChatStream({
+    provider: getAiProvider(ai.provider || 'deepseek'),
     apiKey: ai.apiKey,
-    model: ai.model || 'deepseek-v4-flash',
+    model: ai.model,
     messages,
-    thinkingEnabled: ai.thinkingEnabled !== false,
-    reasoningEffort: ai.reasoningEffort || 'high',
+    deepThink: ai.deepThink || 'high',
     signal: ac.signal,
     onEvent: emit,
   });

@@ -95,11 +95,11 @@
   const aiAskSend = document.getElementById('ai-ask-send');
 
   // 设置面板 AI DOM
+  const setAiProvider = document.getElementById('set-ai-provider');
   const setAiKey = document.getElementById('set-ai-key');
   const setAiModel = document.getElementById('set-ai-model');
   const btnAiRefresh = document.getElementById('btn-ai-refresh');
-  const setAiThinking = document.getElementById('set-ai-thinking');
-  const setAiEffort = document.getElementById('set-ai-effort');
+  const setAiDeepThink = document.getElementById('set-ai-deepthink');
   const setAiExplain = document.getElementById('set-ai-explain');
   const setAiAsk = document.getElementById('set-ai-ask');
   const aiSettingsStatus = document.getElementById('ai-settings-status');
@@ -254,23 +254,55 @@
     else { aiAsk.classList.add('hidden'); cancelAsk(); }
   }
 
+  // 回填 AI 设置表单
+  function fillAiForm(ai) {
+    setAiProvider.value = ai.provider || 'deepseek';
+    setAiKey.value = ai.apiKey || '';
+    setAiDeepThink.value = ai.deepThink || 'high';
+    setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
+    setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
+    // 模型下拉：有已保存模型则选中，否则空提示
+    if (ai.model) {
+      if (![...setAiModel.options].some(o => o.value === ai.model)) {
+        const opt = document.createElement('option');
+        opt.value = ai.model;
+        opt.textContent = ai.model;
+        setAiModel.appendChild(opt);
+      }
+      setAiModel.value = ai.model;
+      setAiModel.disabled = false;
+    } else {
+      setAiModel.innerHTML = '<option value="">先输入 API Key 再点击刷新</option>';
+      setAiModel.disabled = true;
+    }
+  }
+
   async function refreshAiModels() {
+    const key = setAiKey.value.trim();
+    if (!key) {
+      aiSettingsStatus.textContent = '⚠️ 请先输入 API Key';
+      aiSettingsStatus.className = 'err';
+      return;
+    }
     btnAiRefresh.disabled = true;
     aiSettingsStatus.textContent = '拉取模型列表...';
     aiSettingsStatus.className = '';
-    const res = await window.deepshui.aiModels();
+    const res = await window.deepshui.aiModels(setAiProvider.value);
     btnAiRefresh.disabled = false;
     if (res.ok && res.models && res.models.length) {
-      const list = document.getElementById('ai-model-list');
-      list.innerHTML = '';
+      setAiModel.innerHTML = '';
       for (const m of res.models) {
         const opt = document.createElement('option');
         opt.value = m;
-        list.appendChild(opt);
+        opt.textContent = m;
+        setAiModel.appendChild(opt);
       }
-      aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型: ${res.models.join(', ')}`;
+      setAiModel.disabled = false;
+      aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型，请选择`;
       aiSettingsStatus.className = 'ok';
     } else {
+      setAiModel.innerHTML = '<option value="">拉取失败</option>';
+      setAiModel.disabled = true;
       aiSettingsStatus.textContent = `❌ ${res.error || '拉取失败'}`;
       aiSettingsStatus.className = 'err';
     }
@@ -282,11 +314,16 @@
       ai: {
         ...currentConfig.ai,
         apiKey: setAiKey.value.trim(),
-        model: setAiModel.value.trim() || 'deepseek-v4-flash',
+        model: setAiModel.value || '',
       },
     };
     if (!cfg.ai.apiKey) {
-      aiSettingsStatus.textContent = '⚠️ 请先填写 DeepSeek API Key';
+      aiSettingsStatus.textContent = '⚠️ 请先填写 API Key';
+      aiSettingsStatus.className = 'err';
+      return;
+    }
+    if (!cfg.ai.model) {
+      aiSettingsStatus.textContent = '⚠️ 请先拉取并选择模型';
       aiSettingsStatus.className = 'err';
       return;
     }
@@ -360,13 +397,7 @@
     renderEngineFields(setEngine.value);
 
     // AI 配置回填
-    const ai = cfg.ai || {};
-    setAiKey.value = ai.apiKey || '';
-    setAiModel.value = ai.model || 'deepseek-v4-flash';
-    setAiThinking.value = ai.thinkingEnabled === false ? 'off' : 'on';
-    setAiEffort.value = ai.reasoningEffort || 'high';
-    setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
-    setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
+    fillAiForm(cfg.ai || {});
     applyAiVisibility();
 
     // 检查默认引擎凭证
@@ -470,13 +501,7 @@
     renderEngineFields(setEngine.value);
 
     // AI 字段回填
-    const ai = config.ai || {};
-    setAiKey.value = ai.apiKey || '';
-    setAiModel.value = ai.model || 'deepseek-v4-flash';
-    setAiThinking.value = ai.thinkingEnabled === false ? 'off' : 'on';
-    setAiEffort.value = ai.reasoningEffort || 'high';
-    setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
-    setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
+    fillAiForm(config.ai || {});
 
     settingsStatus.textContent = '';
     settingsStatus.className = '';
@@ -500,10 +525,10 @@
       deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
       google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
       ai: {
+        provider: setAiProvider.value,
         apiKey: setAiKey.value.trim(),
-        model: setAiModel.value.trim() || 'deepseek-v4-flash',
-        thinkingEnabled: setAiThinking.value === 'on',
-        reasoningEffort: setAiEffort.value,
+        model: setAiModel.value || '',
+        deepThink: setAiDeepThink.value,
         showExplain: setAiExplain.value === 'on',
         showAsk: setAiAsk.value === 'on',
       },
