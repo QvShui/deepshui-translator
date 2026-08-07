@@ -95,6 +95,7 @@
   const aiAskContent = document.getElementById('ai-ask-content');
   const aiAskBox = document.getElementById('ai-ask-box');
   const aiAskSend = document.getElementById('ai-ask-send');
+  const aiAskClear = document.getElementById('ai-ask-clear');
 
   // 设置面板 AI DOM
   const setAiProvider = document.getElementById('set-ai-provider');
@@ -695,10 +696,27 @@
   setAiModel.addEventListener('change', autoSaveAi);
   setAiKey.addEventListener('change', autoSaveAi); // 失焦时保存
 
-  // AI 问答发送
+  // AI 问答发送 / 清屏
   aiAskSend.addEventListener('click', () => sendAsk());
   aiAskBox.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sendAsk();
+    // Enter 发送，Shift+Enter 换行
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendAsk();
+    }
+  });
+
+  // 输入框随内容自动增高（上限 120px）
+  aiAskBox.addEventListener('input', () => {
+    aiAskBox.style.height = 'auto';
+    aiAskBox.style.height = Math.min(aiAskBox.scrollHeight, 120) + 'px';
+  });
+
+  // 清屏：仅清空显示内容，上下文（askHistory）保留
+  aiAskClear.addEventListener('click', () => {
+    aiAskContent.textContent = '';
+    aiAskStatus.textContent = '';
+    aiAskStatus.className = 'ai-status';
   });
 
   // 设置面板切换引擎 → 动态表单

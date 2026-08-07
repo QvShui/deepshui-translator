@@ -103,8 +103,11 @@
           </div>
           <div id="ai-ask-content" class="ai-content"></div>
           <div class="ai-ask-input">
-            <input id="ai-ask-box" type="text" placeholder="向 AI 提问...">
-            <button id="ai-ask-send">发送</button>
+            <textarea id="ai-ask-box" rows="1" placeholder="向 AI 提问...（Enter 发送，Shift+Enter 换行）"></textarea>
+            <div class="ai-ask-buttons">
+              <button id="ai-ask-clear" title="清空显示内容（上下文保留）">清屏</button>
+              <button id="ai-ask-send">发送</button>
+            </div>
           </div>
         </div>
       </div>
