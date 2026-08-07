@@ -512,14 +512,13 @@ ipcMain.handle('save-config', async (event, cfg) => {
 // 进行中的流式请求表: requestId -> AbortController
 const aiAborters = new Map();
 
-// 拉取 AI 提供商可用模型列表
-ipcMain.handle('ai-models', async (event, providerName) => {
+// 拉取 AI 提供商可用模型列表（当前固定 DeepSeek）
+ipcMain.handle('ai-models', async () => {
   const cfg = loadConfig();
   const ai = cfg.ai;
   if (!ai.apiKey) return { ok: false, error: '未配置 API Key，请到 设置 → AI 引擎 填写' };
   try {
-    const provider = getAiProvider(providerName || ai.provider || 'deepseek');
-    return await fetchAiModels(provider, ai.apiKey);
+    return await fetchAiModels(AI_PROVIDERS.deepseek, ai.apiKey);
   } catch (e) {
     return { ok: false, error: e.message };
   }

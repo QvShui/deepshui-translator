@@ -95,7 +95,6 @@
   const aiAskSend = document.getElementById('ai-ask-send');
 
   // 设置面板 AI DOM
-  const setAiProvider = document.getElementById('set-ai-provider');
   const setAiKey = document.getElementById('set-ai-key');
   const setAiModel = document.getElementById('set-ai-model');
   const btnAiRefresh = document.getElementById('btn-ai-refresh');
@@ -256,7 +255,6 @@
 
   // 回填 AI 设置表单
   function fillAiForm(ai) {
-    setAiProvider.value = ai.provider || 'deepseek';
     setAiKey.value = ai.apiKey || '';
     setAiDeepThink.value = ai.deepThink || 'high';
     setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
@@ -287,7 +285,7 @@
     btnAiRefresh.disabled = true;
     aiSettingsStatus.textContent = '拉取模型列表...';
     aiSettingsStatus.className = '';
-    const res = await window.deepshui.aiModels(setAiProvider.value);
+    const res = await window.deepshui.aiModels();
     btnAiRefresh.disabled = false;
     if (res.ok && res.models && res.models.length) {
       setAiModel.innerHTML = '';
@@ -525,7 +523,6 @@
       deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
       google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
       ai: {
-        provider: setAiProvider.value,
         apiKey: setAiKey.value.trim(),
         model: setAiModel.value || '',
         deepThink: setAiDeepThink.value,
