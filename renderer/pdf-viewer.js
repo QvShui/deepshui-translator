@@ -378,6 +378,21 @@ const PdfViewer = (() => {
     });
   }
 
+  // 提取全文（用于 AI 全文问答上下文）
+  async function extractFullText() {
+    if (!pdfDoc) return '';
+    let full = '';
+    for (let p = 1; p <= pdfDoc.numPages; p++) {
+      const page = await pdfDoc.getPage(p);
+      const tc = await page.getTextContent();
+      full += tc.items.map(i => i.str).join('') + '\n';
+      // 每 50 页让出一次，避免卡 UI
+      if (p % 50 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+    // 清洗断词连字符: "frame-\nwork" → "framework"
+    return full.replace(/-\n/g, '');
+  }
+
   // ── 对外接口 ─────────────────────────────
   return {
     init,
@@ -385,6 +400,7 @@ const PdfViewer = (() => {
     zoomIn,
     zoomOut,
     gotoPage,
+    extractFullText,
     get currentPage() { return currentPage; },
     get pageCount() { return pdfDoc ? pdfDoc.numPages : 0; },
     set onTextSelect(fn) { onTextSelect = fn; },
