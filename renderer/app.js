@@ -167,28 +167,48 @@
     }
   }
 
-  // 流式内容累积 + 节流渲染（避免每 chunk 重渲染卡顿）
-  const mdTimers = {};
+  // 流式内容累积 + 节流渲染（throttle：至少每 300ms 渲染一次，保证流式可见）
+  const MD_INTERVAL = 300;
   function appendAiContent(el, chunk) {
     el.__raw = (el.__raw || '') + chunk;
-    clearTimeout(mdTimers[el.id]);
-    mdTimers[el.id] = setTimeout(() => {
+    const now = Date.now();
+    const last = el.__lastRender || 0;
+    if (now - last >= MD_INTERVAL) {
+      // 距上次渲染足够久 → 立即渲染
       renderMarkdownTo(el, el.__raw);
-      // 跟随最新内容滚动到底部
-      el.scrollTop = el.scrollHeight;
-    }, 350);
+      el.__lastRender = now;
+      followBottom(el);
+    } else if (!el.__pendingTimer) {
+      // 安排一个兜底渲染（保证有输出可见）
+      el.__pendingTimer = setTimeout(() => {
+        el.__pendingTimer = null;
+        renderMarkdownTo(el, el.__raw);
+        el.__lastRender = Date.now();
+        followBottom(el);
+      }, MD_INTERVAL - (now - last));
+    }
   }
 
   function finalizeAiContent(el) {
-    clearTimeout(mdTimers[el.id]);
+    clearTimeout(el.__pendingTimer);
+    el.__pendingTimer = null;
     renderMarkdownTo(el, el.__raw || '');
-    el.scrollTop = el.scrollHeight;
+    el.__lastRender = Date.now();
+    followBottom(el);
   }
 
   function clearAiContent(el) {
-    clearTimeout(mdTimers[el.id]);
+    clearTimeout(el.__pendingTimer);
+    el.__pendingTimer = null;
     el.__raw = '';
+    el.__lastRender = 0;
     el.innerHTML = '';
+  }
+
+  // 仅当接近底部时才跟随滚动（不打扰用户回看历史）
+  function followBottom(el) {
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }
 
   // ── AI 事件监听（主进程流式推送）─────────
