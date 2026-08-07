@@ -248,7 +248,7 @@
     // 同步侧边栏
     targetLang.value = cfg.targetLang;
     engineSelect.value = cfg.engine;
-    settingsStatus.textContent = '✅ 配置已保存（凭证仅存本机用户目录）';
+    settingsStatus.textContent = '✅ 配置已保存';
     settingsStatus.className = 'ok';
   }
 

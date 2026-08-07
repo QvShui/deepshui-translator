@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --linux deb",
-    "dist:appimage": "electron-builder --linux AppImage"
+    "dist:appimage": "electron-builder --linux AppImage",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg"
   },
   "author": "QvShui",
   "license": "MIT",
@@ -31,6 +33,19 @@
       "category": "Office",
       "icon": "assets/icon.png",
       "maintainer": "QvShui <2262501@dhu.edu.cn>"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     },
     "deb": {
       "depends": [

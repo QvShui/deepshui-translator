@@ -2,16 +2,16 @@
 
 **PDF 划词翻译工具** —— 基于 Electron + PDF.js，翻译引擎由用户自备（支持 **有道 / 百度 / 讯飞 / DeepL / Google Cloud**）。
 
-> 轻量、跨平台、开源（MIT）。独立于任何闭源产品，代码完全自主。
+> 轻量、跨平台、开源（MIT）。
 
 ## ✨ 功能
 
 - 📂 打开 / 拖拽 PDF 文件
 - 📄 PDF.js 高质量渲染（连续滚动、Ctrl+滚轮缩放、页码跳转）
-- 🖱️ 划词即译（300ms 防抖，自动清洗断词连字符与换行符）
+- 🖱️ 划词即译（自动清洗断词连字符与换行符）
 - 🌐 多引擎支持：有道 / 百度 / 讯飞 / DeepL / Google Cloud（英⇄中，支持日/韩/法/德）
 - 📋 一键复制译文
-- ⚙️ 设置面板（API 凭证可编辑、测试连接）
+- ⚙️ 设置面板（各引擎凭证独立管理、测试连接）
 
 ## 🚀 快速开始
 
@@ -23,44 +23,71 @@ npm install
 npm start
 ```
 
-> 需要图形环境（X11/Wayland）。
+> 需要图形环境（X11 / Wayland / macOS / Windows）。
 
 ## 🔑 配置翻译 API
 
-在应用内「⚙️ 设置」面板填写有道凭证（应用 ID、应用秘钥、API Key），保存即可。
+在应用内「⚙️ 设置」面板选择引擎并填写对应凭证，保存即可。
 
-**凭证仅保存在本机用户目录**（`~/.config/deepshui-translator/config.json`，权限 600），**不会打包进安装包**。
+**凭证仅保存在本机用户目录，不会打包进安装包**，且各平台自动使用标准配置目录：
 
-在 [有道 AI 开放平台](https://ai.youdao.com/) 注册应用即可获得凭证。
+| 平台 | 配置文件位置 |
+|---|---|
+| Linux | `~/.config/deepshui-translator/config.json` |
+| macOS | `~/Library/Application Support/deepshui-translator/config.json` |
+| Windows | `%APPDATA%\deepshui-translator\config.json` |
 
-## 🔌 支持的引擎
+引擎注册入口：
 
+| 引擎 | 注册地址 |
+|---|---|
+| 有道 | https://ai.youdao.com/ |
+| 百度 | https://fanyi-api.baidu.com/ |
+| 讯飞 | https://www.xfyun.cn/services/its |
+| DeepL | https://www.deepl.com/pro-api （免费 key 以 `:fx` 结尾） |
+| Google Cloud | https://cloud.google.com/translate |
 
+## 📦 打包
+
+| 平台 | 命令 | 产物 |
+|---|---|---|
+| Linux (Debian) | `npm run dist` | `.deb` |
+| Linux (通用) | `npm run dist:appimage` | `.AppImage` |
+| Windows | `npm run dist:win` | `.exe` (NSIS) |
+| macOS | `npm run dist:mac` | `.dmg` |
+
+> - Windows/macOS 图标由 `assets/icon.png` 自动转换，无需额外准备。
+> - macOS 的 `.dmg` 必须在 macOS 上构建；Windows `.exe` 可在 Windows 上构建（Linux 交叉构建需 wine）。
+> - 已发布的 Linux 安装包见 [`release/`](./release)。
+
+### 安装
 
 ```bash
-npm run dist        # 生成 .deb
-npm run dist:appimage  # 生成 AppImage
+sudo dpkg -i release/deepshui-translator_1.1.0_Debian-Trexie_amd64.deb
 ```
 
-安装：
+### 国内网络加速
 
 ```bash
-sudo dpkg -i dist/deepshui-translator_1.1.0_amd64.deb
+npm config set registry https://registry.npmmirror.com
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
+ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ npm run dist
 ```
 
 ## 🗂️ 项目结构
 
 ```
-├── main.js              # Electron 主进程（窗口、菜单、有道翻译调用）
+├── main.js              # Electron 主进程（窗口、菜单、多引擎翻译）
 ├── preload.js           # IPC 安全桥接
 ├── renderer/
 │   ├── index.html       # 主界面
 │   ├── style.css
-│   ├── app.js           # 划词翻译、设置面板逻辑
+│   ├── app.js           # 划词翻译、多引擎设置面板
 │   ├── pdf-viewer.js    # PDF.js 阅读器（虚拟滚动按需渲染）
 │   └── pdfjs/           # PDF.js 本地库
 ├── assets/              # 应用图标
-└── build/               # 打包脚本
+├── build/               # deb 安装后脚本
+└── release/             # 已发布安装包
 ```
 
 ## 📜 开源协议

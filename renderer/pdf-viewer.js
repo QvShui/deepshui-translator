@@ -1,12 +1,6 @@
 /**
- * deepshui-translator - PDF 阅读器模块 (beta-0.4)
+ * deepshui-translator - PDF 阅读器模块
  * 基于 PDF.js，连续滚动 + 虚拟滚动按需渲染
- * 
- * beta-0.4 性能优化：
- *  - 打开 PDF 秒开（只渲染视口附近页面，不再全量渲染）
- *  - 滚动时增量渲染进入视口的页面
- *  - 远离视口的页面自动回收，释放 canvas 内存（大 PDF 不卡）
- *  - 预计算所有页高度，滚动条长度始终正确
  */
 
 const PdfViewer = (() => {

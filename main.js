@@ -9,9 +9,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');
 
-// ── 用户配置（凭证存用户目录，绝不打进安装包）────────────
 // 配置文件: ~/.config/deepshui-translator/config.json (Linux)
-// 权限: 600 (仅当前用户可读写)
 const DEFAULT_CONFIG = () => ({
   engine: 'youdao',
   targetLang: 'zh-CN',
