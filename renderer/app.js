@@ -287,7 +287,7 @@
     btnAiRefresh.disabled = true;
     aiSettingsStatus.textContent = '拉取模型列表...';
     aiSettingsStatus.className = '';
-    const res = await window.deepshui.aiModels(setAiProvider.value);
+    const res = await window.deepshui.aiModels(setAiProvider.value, key);
     btnAiRefresh.disabled = false;
     if (res.ok && res.models && res.models.length) {
       setAiModel.innerHTML = '';
@@ -534,14 +534,17 @@
       },
     };
 
-    // 校验当前引擎凭证
-    const def = ENGINE_FIELDS[cfg.engine] || [];
-    const cred = cfg[cfg.engine] || {};
-    const missing = def.filter(f => !cred[f.key]).map(f => f.label);
-    if (missing.length > 0) {
-      settingsStatus.textContent = `⚠️ 请填写 ${ENGINE_LABELS[cfg.engine]} 的: ${missing.join('、')}`;
-      settingsStatus.className = 'err';
-      return;
+    // 仅当「翻译引擎」tab 激活时才校验翻译引擎凭证；AI tab 保存不受翻译引擎凭证限制
+    const engineTabActive = !engineTab.classList.contains('hidden');
+    if (engineTabActive) {
+      const def = ENGINE_FIELDS[cfg.engine] || [];
+      const cred = cfg[cfg.engine] || {};
+      const missing = def.filter(f => !cred[f.key]).map(f => f.label);
+      if (missing.length > 0) {
+        settingsStatus.textContent = `⚠️ 请填写 ${ENGINE_LABELS[cfg.engine]} 的: ${missing.join('、')}`;
+        settingsStatus.className = 'err';
+        return;
+      }
     }
 
     await window.deepshui.saveConfig(cfg);

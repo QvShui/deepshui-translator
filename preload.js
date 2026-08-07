@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('deepshui', {
   saveConfig: (cfg) => ipcRenderer.invoke('save-config', cfg),
 
   // AI 引擎
-  aiModels: () => ipcRenderer.invoke('ai-models'),
+  aiModels: (provider, apiKey) => ipcRenderer.invoke('ai-models', { provider, apiKey }),
   aiChat: (requestId, messages, kind) => ipcRenderer.invoke('ai-chat', { requestId, messages, kind }),
   aiCancel: (requestId) => ipcRenderer.invoke('ai-cancel', requestId),
   onAiEvent: (callback) => {
