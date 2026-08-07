@@ -434,6 +434,7 @@
     const cfg = await window.deepshui.getConfig();
     currentConfig = cfg;
     targetLang.value = cfg.targetLang || 'zh-CN';
+    updateTranslatePlaceholder(targetLang.value);
     engineSelect.value = cfg.engine || 'youdao';
     setEngine.value = cfg.engine || 'youdao';
     setLang.value = cfg.targetLang || 'zh-CN';
@@ -500,25 +501,34 @@
   function handleTextSelect(text) {
     if (text.length > 5000) text = text.substring(0, 5000);
     currentSelection = text;
-    showLoading();
 
     // 划线变化 → 立即打断旧解释
     if (aiExplainRunning) {
       cancelExplain();
     }
 
-    clearTimeout(translateTimer);
-    translateTimer = setTimeout(async () => {
-      const to = targetLang.value;
-      const engine = engineSelect.value;
-      const result = await window.deepshui.translate(text, 'auto', to, engine);
+    // 目标语言为「不翻译」时跳过翻译流程
+    const to = targetLang.value;
+    if (to === 'none') {
+      translatePlaceholder.classList.remove('hidden');
+      translateResult.classList.add('hidden');
+      translateLoading.classList.add('hidden');
+      translateError.classList.add('hidden');
+      updateTranslatePlaceholder('none');
+    } else {
+      showLoading();
+      clearTimeout(translateTimer);
+      translateTimer = setTimeout(async () => {
+        const engine = engineSelect.value;
+        const result = await window.deepshui.translate(text, 'auto', to, engine);
 
-      if (result.ok) {
-        showResult(text, result.text, result.engine);
-      } else {
-        showError(result.error);
-      }
-    }, 300);
+        if (result.ok) {
+          showResult(text, result.text, result.engine);
+        } else {
+          showError(result.error);
+        }
+      }, 300);
+    }
 
     // AI 解释（若开启且已配置 key）
     const ai = currentConfig.ai || {};
@@ -528,6 +538,16 @@
       aiExplainTimer = setTimeout(() => {
         startExplain(text);
       }, 400);
+    }
+  }
+
+  // 占位提示文案：随目标语言模式变化
+  function updateTranslatePlaceholder(mode) {
+    const p = translatePlaceholder.querySelector('p');
+    if (p) {
+      p.textContent = mode === 'none'
+        ? '不翻译模式：划词仅进行 AI 解释（如已开启）'
+        : '在 PDF 中选中文本，翻译结果会显示在这里';
     }
   }
 
@@ -838,8 +858,9 @@
     currentConfig = cfg;
   });
 
-  // 侧边栏切换目标语言 → 立即保存
+  // 侧边栏切换目标语言 → 立即保存 + 更新占位提示
   targetLang.addEventListener('change', async () => {
+    updateTranslatePlaceholder(targetLang.value);
     const cfg = await window.deepshui.getConfig();
     cfg.targetLang = targetLang.value;
     await window.deepshui.saveConfig(cfg);
