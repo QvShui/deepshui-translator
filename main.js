@@ -121,10 +121,15 @@ async function translateYoudao(text, from, to, cred) {
     appKey, salt, sign, signType: 'v3', curtime,
   });
 
+  // POST（GET 超长文本会触发 URL 长度限制）
   const res = await httpRequest({
-    hostname: 'openapi.youdao.com', path: '/api?' + params.toString(), method: 'GET',
-    headers: { 'User-Agent': 'DeepshuiTranslator/1.0' },
-  });
+    hostname: 'openapi.youdao.com', path: '/api', method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': Buffer.byteLength(params.toString()),
+      'User-Agent': 'DeepshuiTranslator/1.0',
+    },
+  }, params.toString());
   const parsed = JSON.parse(res.data);
   if (parsed.errorCode === '0') {
     return { ok: true, text: (parsed.translation || []).join('') };
@@ -154,10 +159,15 @@ async function translateBaidu(text, from, to, cred) {
     appid, salt, sign,
   });
 
+  // POST（GET 超长文本会触发 URL 长度限制）
   const res = await httpRequest({
-    hostname: 'api.fanyi.baidu.com', path: '/api/trans/vip/translate?' + params.toString(),
-    method: 'GET', headers: { 'User-Agent': 'DeepshuiTranslator/1.0' },
-  });
+    hostname: 'api.fanyi.baidu.com', path: '/api/trans/vip/translate', method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': Buffer.byteLength(params.toString()),
+      'User-Agent': 'DeepshuiTranslator/1.0',
+    },
+  }, params.toString());
   const parsed = JSON.parse(res.data);
   if (parsed.error_code === '0' || (!parsed.error_code && parsed.trans_result)) {
     return { ok: true, text: (parsed.trans_result || []).map(t => t.dst).join('\n') };
@@ -476,14 +486,18 @@ ipcMain.handle('translate', async (event, { text, from, to, engine }) => {
   const cfg = loadConfig();
   const eng = engine || cfg.engine || 'youdao';
   try {
-    let result = await translateWith(eng, text, from, to, cfg);
-    if (!result.ok) {
-      // 重试 1 次
-      result = await translateWith(eng, text, from, to, cfg);
-    }
+    const result = await translateWith(eng, text, from, to, cfg);
+    // 业务错误（凭证缺失/错误码）不重试，直接返回
+    if (!result.ok) return { ...result, engine: eng };
     return { ...result, engine: eng };
   } catch (e) {
-    return { ok: false, error: e.message, engine: eng };
+    // 网络异常/超时：重试 1 次
+    try {
+      const retry = await translateWith(eng, text, from, to, cfg);
+      return { ...retry, engine: eng };
+    } catch (e2) {
+      return { ok: false, error: e2.message, engine: eng };
+    }
   }
 });
 

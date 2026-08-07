@@ -46,6 +46,7 @@ const PdfViewer = (() => {
   const placeholderText = document.getElementById('placeholder-text');
 
   let onTextSelect = null;
+  let onPdfLoaded = null;
 
   // ── 加载 PDF ─────────────────────────────
   async function loadPdf(data, name) {
@@ -83,6 +84,9 @@ const PdfViewer = (() => {
       loadingProgress.classList.add('hidden');
       updateToolbar();
       await renderVisiblePages(true);
+
+      // 通知外部（拖拽/对话框打开都触发）
+      if (onPdfLoaded) onPdfLoaded(fileName);
     } catch (e) {
       console.error(e);
       alert('PDF 加载失败: ' + e.message);
@@ -378,17 +382,22 @@ const PdfViewer = (() => {
     });
   }
 
-  // 提取全文（用于 AI 全文问答上下文）
-  async function extractFullText() {
+  // 提取全文（用于 AI 全文问答上下文），onProgress({current,total}) 每 10 页回调
+  async function extractFullText(onProgress) {
     if (!pdfDoc) return '';
+    const total = pdfDoc.numPages;
     let full = '';
     for (let p = 1; p <= pdfDoc.numPages; p++) {
       const page = await pdfDoc.getPage(p);
       const tc = await page.getTextContent();
       full += tc.items.map(i => i.str).join('') + '\n';
-      // 每 50 页让出一次，避免卡 UI
-      if (p % 50 === 0) await new Promise(r => setTimeout(r, 0));
+      // 进度回调 + 让出主线程
+      if (p % 10 === 0) {
+        if (onProgress) onProgress({ current: p, total });
+        await new Promise(r => setTimeout(r, 0));
+      }
     }
+    if (onProgress) onProgress({ current: total, total });
     // 清洗断词连字符: "frame-\nwork" → "framework"
     return full.replace(/-\n/g, '');
   }
@@ -404,5 +413,6 @@ const PdfViewer = (() => {
     get currentPage() { return currentPage; },
     get pageCount() { return pdfDoc ? pdfDoc.numPages : 0; },
     set onTextSelect(fn) { onTextSelect = fn; },
+    set onPdfLoaded(fn) { onPdfLoaded = fn; },
   };
 })();

@@ -87,6 +87,7 @@
   let pdfOpenCounter = 0;        // 防止并发总结
   let aiExplainShares = false;   // 解释是否并入问答上下文
   let explainPendingText = '';   // 当前解释对应的段落（并入历史用）
+  let askCurrentAnswer = '';     // 本轮问答累积的回答（避免历史重复累积）
 
   // 确认框 DOM
   const confirmOverlay = document.getElementById('confirm-overlay');
@@ -104,6 +105,10 @@
   const aiAskBox = document.getElementById('ai-ask-box');
   const aiAskSend = document.getElementById('ai-ask-send');
   const aiAskClear = document.getElementById('ai-ask-clear');
+  const aiAskReset = document.getElementById('ai-ask-reset');
+  const fulltextProgress = document.getElementById('fulltext-progress');
+  const fulltextProgressBar = document.getElementById('fulltext-progress-bar');
+  const fulltextProgressText = document.getElementById('fulltext-progress-text');
 
   // 设置面板 AI DOM
   const setAiProvider = document.getElementById('set-ai-provider');
@@ -127,7 +132,29 @@
   window.deepshui.onAiEvent(({ requestId, kind, type, text, seconds, usage, message }) => {
     if (kind === 'explain') handleExplainEvent(type, text, seconds, usage, message);
     else if (kind === 'ask') handleAskEvent(type, text, seconds, usage, message);
+    else if (kind === 'test') handleTestEvent(type, text, message);
   });
+
+  // AI 测试事件（独立于解释区）
+  let testAnswer = '';
+  function handleTestEvent(type, text, message) {
+    switch (type) {
+      case 'content':
+        testAnswer += text;
+        break;
+      case 'done':
+      case 'end':
+        aiSettingsStatus.textContent = `✅ 连接成功: ${testAnswer || '正常'}`;
+        aiSettingsStatus.className = 'ok';
+        testAnswer = '';
+        break;
+      case 'error':
+        aiSettingsStatus.textContent = `❌ 连接失败: ${message}`;
+        aiSettingsStatus.className = 'err';
+        testAnswer = '';
+        break;
+    }
+  }
 
   // ── AI 解释 ───────────────────────────────
   function handleExplainEvent(type, text, seconds, usage, message) {
@@ -222,6 +249,7 @@
         break;
       case 'content':
         aiAskContent.textContent += text;
+        askCurrentAnswer += text;
         break;
       case 'done':
       case 'end':
@@ -232,8 +260,9 @@
         aiAskStatus.className = 'ai-status';
         aiAskSend.disabled = false;
         aiAskBox.disabled = false;
-        // 保存回答到多轮历史
-        askHistory.push({ role: 'assistant', content: aiAskContent.textContent });
+        // 只保存本轮回答到历史（修复历史重复累积）
+        askHistory.push({ role: 'assistant', content: askCurrentAnswer });
+        askCurrentAnswer = '';
         break;
       case 'error':
         aiAskRunning = false;
@@ -257,6 +286,7 @@
 
     // 追加用户问题（初始总结消息也算历史第一条）
     askHistory.push({ role: 'user', content: q });
+    askCurrentAnswer = '';
     aiAskContent.textContent += isInitial
       ? '\n\n**AI 总结**: '
       : `\n\n**你**: ${q}\n\n**AI**: `;
@@ -377,13 +407,13 @@
     const res = await window.deepshui.aiChat('test', [
       { role: 'system', content: '你是一个乐于助人的 AI 助手。' },
       { role: 'user', content: '回复两个字：正常' },
-    ], 'explain');
+    ], 'test');
     if (!res.ok) {
       aiSettingsStatus.textContent = `❌ ${res.error}`;
       aiSettingsStatus.className = 'err';
     } else {
-      aiSettingsStatus.textContent = '✅ 请求已发送，检查右侧栏 AI 解释区';
-      aiSettingsStatus.className = 'ok';
+      aiSettingsStatus.textContent = '测试中（需几秒）...';
+      aiSettingsStatus.className = '';
     }
   }
 
@@ -466,20 +496,31 @@
     }
     const bytes = Uint8Array.from(atob(res.data), c => c.charCodeAt(0));
     await PdfViewer.loadPdf(bytes, res.name);
-    handlePdfOpened();
+    // handlePdfOpened 由 PdfViewer.onPdfLoaded 统一触发（含拖拽路径）
   }
 
-  // PDF 打开后：提取全文 → 重置问答历史 → 自动总结（若 AI 可用）
+  // PDF 打开后：提取全文（带进度）→ 重置问答历史 → 自动总结（若 AI 可用）
   async function handlePdfOpened() {
     const myTurn = ++pdfOpenCounter;
-    // 后台提取全文（大 PDF 耗时，不阻塞 UI）
+    // 显示提取进度
+    fulltextProgress.classList.remove('hidden');
+    fulltextProgressBar.style.width = '0%';
+    fulltextProgressText.textContent = '正在提取全文 0%';
+
     setTimeout(async () => {
-      const text = await PdfViewer.extractFullText();
+      const text = await PdfViewer.extractFullText(({ current, total }) => {
+        if (myTurn !== pdfOpenCounter) return;
+        const pct = Math.round(current / total * 100);
+        fulltextProgressBar.style.width = pct + '%';
+        fulltextProgressText.textContent = `正在提取全文 ${current}/${total} (${pct}%)`;
+      });
       if (myTurn !== pdfOpenCounter) return; // 已打开新 PDF，丢弃
       fullText = text;
+      fulltextProgress.classList.add('hidden');
 
       // 重置问答历史（新文档新会话）
       askHistory = [];
+      askCurrentAnswer = '';
       aiAskContent.textContent = '';
       aiAskStatus.textContent = '';
 
@@ -488,11 +529,11 @@
         return;
       }
 
-      // 自动总结（AI 已配置 + 问答显示开启）
+      // 自动总结（AI 已配置 + 问答显示开启）——全文只放 system，避免双重注入
       const ai = currentConfig.ai || {};
       if (ai.apiKey && ai.model && ai.showAsk) {
         aiAsk.classList.remove('hidden');
-        sendAsk('请阅读并理解下面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。\n\n' + fullText, true);
+        sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
       }
     }, 100);
   }
@@ -728,6 +769,7 @@
     const ai = currentConfig.ai || {};
     // AI 表单（自动保存，通常无差异，但 key 未失焦时可能未保存）
     const aiChanged =
+      setAiProvider.value !== (ai.provider || 'deepseek') ||
       setAiKey.value.trim() !== (ai.apiKey || '') ||
       setAiModel.value !== (ai.model || '') ||
       setAiDeepThink.value !== (ai.deepThink || 'off') ||
@@ -845,6 +887,32 @@
     aiAskContent.textContent = '';
     aiAskStatus.textContent = '';
     aiAskStatus.className = 'ai-status';
+    // 重置输入框高度（BUG-14）
+    aiAskBox.style.height = 'auto';
+  });
+
+  // 重置对话：清空历史并重新喂入全文让 AI 总结（应对历史无限增长）
+  aiAskReset.addEventListener('click', async () => {
+    cancelAsk();
+    askHistory = [];
+    askCurrentAnswer = '';
+    aiAskContent.textContent = '';
+    aiAskStatus.textContent = '';
+    aiAskStatus.className = 'ai-status';
+    aiAskBox.style.height = 'auto';
+    aiAskBox.disabled = false;
+    aiAskSend.disabled = false;
+
+    const ai = currentConfig.ai || {};
+    if (fullText && ai.apiKey && ai.model) {
+      aiAskContent.textContent = '已重置对话，正在重新喂入全文...';
+      // 重新喂全文：全文通过 system 注入（sendAsk 自动带上），只需发总结指令
+      sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
+    } else if (fullText) {
+      aiAskContent.textContent = '已重置对话。配置 AI 引擎后提问会自动带上全文。';
+    } else {
+      aiAskContent.textContent = '已重置对话。打开 PDF 后可进行全文问答。';
+    }
   });
 
   // 设置面板切换引擎 → 动态表单
@@ -890,6 +958,7 @@
   // ── 初始化 ───────────────────────────────
   PdfViewer.init();
   PdfViewer.onTextSelect = handleTextSelect;
+  PdfViewer.onPdfLoaded = handlePdfOpened;
   initConfig();
 
 })();
