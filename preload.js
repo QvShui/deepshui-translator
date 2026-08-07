@@ -7,8 +7,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('deepshui', {
   // 翻译：text -> {ok, text|error, engine}
-  translate: (text, from = 'auto', to = 'zh-CHS') =>
-    ipcRenderer.invoke('translate', { text, from, to }),
+  translate: (text, from = 'auto', to = 'zh-CN', engine) =>
+    ipcRenderer.invoke('translate', { text, from, to, engine }),
 
   // 打开 PDF 文件对话框
   openPdfDialog: () => ipcRenderer.invoke('open-pdf-dialog'),

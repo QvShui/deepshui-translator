@@ -1,6 +1,6 @@
 # deepshui-translator
 
-**PDF 划词翻译工具** —— 基于 Electron + PDF.js，翻译引擎由用户自备（当前支持**有道翻译 API**）。
+**PDF 划词翻译工具** —— 基于 Electron + PDF.js，翻译引擎由用户自备（支持 **有道 / 百度 / 讯飞 / DeepL / Google Cloud**）。
 
 > 轻量、跨平台、开源（MIT）。独立于任何闭源产品，代码完全自主。
 
@@ -9,7 +9,7 @@
 - 📂 打开 / 拖拽 PDF 文件
 - 📄 PDF.js 高质量渲染（连续滚动、Ctrl+滚轮缩放、页码跳转）
 - 🖱️ 划词即译（300ms 防抖，自动清洗断词连字符与换行符）
-- 🌐 有道翻译 API（英⇄中，支持日/韩/法/德）
+- 🌐 多引擎支持：有道 / 百度 / 讯飞 / DeepL / Google Cloud（英⇄中，支持日/韩/法/德）
 - 📋 一键复制译文
 - ⚙️ 设置面板（API 凭证可编辑、测试连接）
 
@@ -33,7 +33,9 @@ npm start
 
 在 [有道 AI 开放平台](https://ai.youdao.com/) 注册应用即可获得凭证。
 
-## 📦 打包
+## 🔌 支持的引擎
+
+
 
 ```bash
 npm run dist        # 生成 .deb
@@ -43,7 +45,7 @@ npm run dist:appimage  # 生成 AppImage
 安装：
 
 ```bash
-sudo dpkg -i dist/deepshui-translator_1.0.0_amd64.deb
+sudo dpkg -i dist/deepshui-translator_1.1.0_amd64.deb
 ```
 
 ## 🗂️ 项目结构

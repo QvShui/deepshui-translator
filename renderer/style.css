@@ -184,14 +184,21 @@ html, body {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   font-weight: 600;
+  gap: 8px;
+}
+
+.sidebar-controls {
+  display: flex;
+  gap: 6px;
 }
 
 #sidebar-header select {
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 3px 6px;
+  padding: 3px 4px;
   font-size: 12px;
   background: #fff;
+  max-width: 84px;
 }
 
 #sidebar-content {

@@ -1,10 +1,43 @@
 /**
  * deepshui-translator - 渲染进程主逻辑
- * 划词翻译 + 设置面板 + 工具栏
+ * 划词翻译 + 多引擎设置面板 + 工具栏
  */
 
 (() => {
   'use strict';
+
+  // 引擎凭证字段定义（设置面板动态表单）
+  const ENGINE_FIELDS = {
+    youdao: [
+      { key: 'appKey', label: '应用 ID', type: 'text', placeholder: '应用 ID' },
+      { key: 'appSecret', label: '应用密钥', type: 'password', placeholder: '应用密钥' },
+    ],
+    baidu: [
+      { key: 'appid', label: 'appid', type: 'text', placeholder: 'appid' },
+      { key: 'secretKey', label: '密钥', type: 'password', placeholder: '密钥' },
+    ],
+    xunfei: [
+      { key: 'appid', label: 'appid', type: 'text', placeholder: 'appid' },
+      { key: 'apiKey', label: 'API Key', type: 'text', placeholder: 'API Key' },
+      { key: 'apiSecret', label: 'API Secret', type: 'password', placeholder: 'API Secret' },
+    ],
+    deepl: [
+      { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'DeepL API Key (免费版以 :fx 结尾)' },
+    ],
+    google: [
+      { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'Google Cloud API Key' },
+    ],
+  };
+
+  const ENGINE_HELP = {
+    youdao: '注册: https://ai.youdao.com/',
+    baidu: '注册: https://fanyi-api.baidu.com/',
+    xunfei: '注册: https://www.xfyun.cn/services/its',
+    deepl: '注册: https://www.deepl.com/pro-api (免费版 key 以 :fx 结尾)',
+    google: '注册: https://cloud.google.com/translate (启用 Cloud Translation API 并创建 API Key)',
+  };
+
+  const ENGINE_LABELS = { youdao: '有道翻译', baidu: '百度翻译', xunfei: '讯飞翻译', deepl: 'DeepL', google: 'Google 翻译' };
 
   // DOM 引用
   const btnOpen = document.getElementById('btn-open');
@@ -15,6 +48,7 @@
   const pageInput = document.getElementById('page-input');
   const btnSettings = document.getElementById('btn-settings');
   const targetLang = document.getElementById('target-lang');
+  const engineSelect = document.getElementById('engine-select');
 
   // 侧边栏
   const translatePlaceholder = document.getElementById('translate-placeholder');
@@ -33,29 +67,80 @@
   const btnSettingsSave = document.getElementById('btn-settings-save');
   const btnSettingsTest = document.getElementById('btn-settings-test');
   const settingsStatus = document.getElementById('settings-status');
-  const setAppkey = document.getElementById('set-appkey');
-  const setSecret = document.getElementById('set-secret');
-  const setApikey = document.getElementById('set-apikey');
+  const setEngine = document.getElementById('set-engine');
   const setLang = document.getElementById('set-lang');
+  const engineFields = document.getElementById('engine-fields');
+  const engineHelp = document.getElementById('engine-help');
 
   // ── 状态 ─────────────────────────────────
   let currentConfig = {};
   let translateTimer = null; // 防抖
+  const fieldInputs = {};    // engine -> { key: inputEl }
 
-  // 应用已保存的目标语言到侧边栏，并检查凭证
+  // ── 设置面板：动态凭证表单 ───────────────
+  function renderEngineFields(engine) {
+    engineFields.innerHTML = '';
+    const fields = ENGINE_FIELDS[engine] || [];
+    fieldInputs[engine] = {};
+
+    for (const f of fields) {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+
+      const label = document.createElement('label');
+      label.textContent = f.label;
+
+      const input = document.createElement('input');
+      input.type = f.type;
+      input.placeholder = f.placeholder;
+      input.dataset.key = f.key;
+
+      row.appendChild(label);
+      row.appendChild(input);
+      engineFields.appendChild(row);
+      fieldInputs[engine][f.key] = input;
+    }
+
+    // 回填已保存的凭证
+    const cred = currentConfig[engine] || {};
+    for (const [key, input] of Object.entries(fieldInputs[engine])) {
+      input.value = cred[key] || '';
+    }
+
+    engineHelp.textContent = '获取凭证: ' + (ENGINE_HELP[engine] || '');
+  }
+
+  function collectCredentials(engine) {
+    const cred = {};
+    const inputs = fieldInputs[engine] || {};
+    for (const [key, input] of Object.entries(inputs)) {
+      cred[key] = input.value.trim();
+    }
+    return cred;
+  }
+
+  // ── 启动初始化 ───────────────────────────
   async function initConfig() {
     const cfg = await window.deepshui.getConfig();
     currentConfig = cfg;
-    if (cfg.targetLang) targetLang.value = cfg.targetLang;
-    if (!cfg.appKey || !cfg.appSecret) {
-      showError('首次使用：请先在 ⚙️ 设置 中填写有道翻译 API 凭证（应用 ID 和应用秘钥）');
+    targetLang.value = cfg.targetLang || 'zh-CN';
+    engineSelect.value = cfg.engine || 'youdao';
+    setEngine.value = cfg.engine || 'youdao';
+    setLang.value = cfg.targetLang || 'zh-CN';
+    renderEngineFields(setEngine.value);
+
+    // 检查默认引擎凭证
+    const cred = cfg[cfg.engine] || {};
+    const def = ENGINE_FIELDS[cfg.engine] || [];
+    const missing = def.some(f => !cred[f.key]);
+    if (missing) {
+      showError(`首次使用：请先在 ⚙️ 设置 中配置 ${ENGINE_LABELS[cfg.engine] || cfg.engine} 的 API 凭证`);
     }
   }
 
   // ── PDF 打开 ─────────────────────────────
   async function openPdfViaDialog() {
-    const result = await window.deepshui.openPdfDialog();
-    return result;
+    return window.deepshui.openPdfDialog();
   }
 
   async function openPdfFile(filePath) {
@@ -70,16 +155,14 @@
 
   // ── 划词翻译 ─────────────────────────────
   function handleTextSelect(text) {
-    if (text.length > 5000) {
-      text = text.substring(0, 5000);
-    }
+    if (text.length > 5000) text = text.substring(0, 5000);
     showLoading();
 
-    // 防抖 300ms，避免连续触发
     clearTimeout(translateTimer);
     translateTimer = setTimeout(async () => {
       const to = targetLang.value;
-      const result = await window.deepshui.translate(text, 'auto', to);
+      const engine = engineSelect.value;
+      const result = await window.deepshui.translate(text, 'auto', to, engine);
 
       if (result.ok) {
         showResult(text, result.text, result.engine);
@@ -101,7 +184,7 @@
     translateError.classList.add('hidden');
     resultSource.textContent = source;
     resultTarget.textContent = target;
-    resultEngine.textContent = engine === 'youdao' ? '有道翻译' : engine;
+    resultEngine.textContent = (ENGINE_LABELS[engine] || engine) + (engine !== currentConfig.engine ? '' : '');
     translateResult.classList.remove('hidden');
   }
 
@@ -111,9 +194,6 @@
     errorText.textContent = msg;
     translateError.classList.remove('hidden');
   }
-
-  // 未配置凭证时，错误提示附上「去设置」入口
-  initConfig();
 
   // ── 复制 ─────────────────────────────────
   function copyResult() {
@@ -129,10 +209,9 @@
   async function openSettings() {
     const config = await window.deepshui.getConfig();
     currentConfig = config;
-    setAppkey.value = config.appKey || '';
-    setSecret.value = config.appSecret || '';
-    setApikey.value = config.apiKey || '';
-    setLang.value = config.targetLang || 'zh-CHS';
+    setEngine.value = config.engine || 'youdao';
+    setLang.value = config.targetLang || 'zh-CN';
+    renderEngineFields(setEngine.value);
     settingsStatus.textContent = '';
     settingsStatus.className = '';
     settingsOverlay.classList.remove('hidden');
@@ -143,48 +222,69 @@
   }
 
   async function saveSettings() {
+    // 收集当前引擎凭证，保留其他引擎已保存的
     const cfg = {
-      appKey: setAppkey.value.trim(),
-      appSecret: setSecret.value.trim(),
-      apiKey: setApikey.value.trim(),
+      engine: setEngine.value,
       targetLang: setLang.value,
+      youdao: { ...currentConfig.youdao, ...(setEngine.value === 'youdao' ? collectCredentials('youdao') : {}) },
+      baidu: { ...currentConfig.baidu, ...(setEngine.value === 'baidu' ? collectCredentials('baidu') : {}) },
+      xunfei: { ...currentConfig.xunfei, ...(setEngine.value === 'xunfei' ? collectCredentials('xunfei') : {}) },
+      deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
+      google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
     };
-    if (!cfg.appKey || !cfg.appSecret) {
-      settingsStatus.textContent = '⚠️ 应用 ID 和应用秘钥必填';
+
+    // 校验当前引擎凭证
+    const def = ENGINE_FIELDS[cfg.engine] || [];
+    const cred = cfg[cfg.engine] || {};
+    const missing = def.filter(f => !cred[f.key]).map(f => f.label);
+    if (missing.length > 0) {
+      settingsStatus.textContent = `⚠️ 请填写 ${ENGINE_LABELS[cfg.engine]} 的: ${missing.join('、')}`;
       settingsStatus.className = 'err';
       return;
     }
+
     await window.deepshui.saveConfig(cfg);
     currentConfig = cfg;
-    // 同步侧边栏目标语言
+    // 同步侧边栏
     targetLang.value = cfg.targetLang;
-    settingsStatus.textContent = '✅ 配置已保存，保存在用户目录（不会打包进应用）';
+    engineSelect.value = cfg.engine;
+    settingsStatus.textContent = '✅ 配置已保存（凭证仅存本机用户目录）';
     settingsStatus.className = 'ok';
   }
 
   async function testConnection() {
-    const cfg = {
-      appKey: setAppkey.value.trim(),
-      appSecret: setSecret.value.trim(),
-      apiKey: setApikey.value.trim(),
-      targetLang: setLang.value,
-    };
-    if (!cfg.appKey || !cfg.appSecret) {
-      settingsStatus.textContent = '⚠️ 请先填写应用 ID 和应用秘钥';
+    const engine = setEngine.value;
+    const cred = collectCredentials(engine);
+    const def = ENGINE_FIELDS[engine] || [];
+    const missing = def.filter(f => !cred[f.key]).map(f => f.label);
+    if (missing.length > 0) {
+      settingsStatus.textContent = `⚠️ 请先填写 ${ENGINE_LABELS[engine]} 的: ${missing.join('、')}`;
       settingsStatus.className = 'err';
       return;
     }
+
+    // 临时保存再测试，保证用新凭证
+    const cfg = {
+      engine: setEngine.value,
+      targetLang: setLang.value,
+      youdao: { ...currentConfig.youdao },
+      baidu: { ...currentConfig.baidu },
+      xunfei: { ...currentConfig.xunfei },
+      deepl: { ...currentConfig.deepl },
+      google: { ...currentConfig.google },
+    };
+    cfg[engine] = cred;
+    await window.deepshui.saveConfig(cfg);
+
     settingsStatus.textContent = '测试中...';
     settingsStatus.className = '';
-    // 临时保存后测试，避免测试用旧配置
-    await window.deepshui.saveConfig(cfg);
     const testText = 'Hello, this is a test for machine translation.';
-    const result = await window.deepshui.translate(testText, 'auto', 'zh-CHS');
+    const result = await window.deepshui.translate(testText, 'auto', 'zh-CN', engine);
     if (result.ok) {
-      settingsStatus.textContent = `✅ 连接成功: ${result.text}`;
+      settingsStatus.textContent = `✅ ${ENGINE_LABELS[engine]} 连接成功: ${result.text}`;
       settingsStatus.className = 'ok';
     } else {
-      settingsStatus.textContent = `❌ 连接失败: ${result.error}`;
+      settingsStatus.textContent = `❌ ${ENGINE_LABELS[engine]} 连接失败: ${result.error}`;
       settingsStatus.className = 'err';
     }
   }
@@ -212,6 +312,17 @@
   btnSettingsSave.addEventListener('click', saveSettings);
   btnSettingsTest.addEventListener('click', testConnection);
   btnCopy.addEventListener('click', copyResult);
+
+  // 设置面板切换引擎 → 动态表单
+  setEngine.addEventListener('change', () => renderEngineFields(setEngine.value));
+
+  // 侧边栏切换引擎 → 保存默认引擎
+  engineSelect.addEventListener('change', async () => {
+    const cfg = await window.deepshui.getConfig();
+    cfg.engine = engineSelect.value;
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+  });
 
   // 侧边栏切换目标语言 → 立即保存
   targetLang.addEventListener('change', async () => {
@@ -244,5 +355,6 @@
   // ── 初始化 ───────────────────────────────
   PdfViewer.init();
   PdfViewer.onTextSelect = handleTextSelect;
+  initConfig();
 
 })();
