@@ -64,8 +64,8 @@ npm start
 从 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases) 下载：
 
 ```bash
-wget https://github.com/QvShui/deepshui-translator/releases/download/v2.0.2/deepshui-translator_2.0.2_Debian-Trixie_amd64.deb
-sudo dpkg -i deepshui-translator_2.0.2_Debian-Trixie_amd64.deb
+wget https://github.com/QvShui/deepshui-translator/releases/download/v2.0.3/deepshui-translator_2.0.3_Debian-Trixie_amd64.deb
+sudo dpkg -i deepshui-translator_2.0.3_Debian-Trixie_amd64.deb
 ```
 
 > Linux 安装包在 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases) 下载。macOS/Windows 用户请自行从源码构建（见下）。

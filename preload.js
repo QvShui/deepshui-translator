@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('deepshui', {
   onAiEvent: (callback) => {
     ipcRenderer.on('ai-event', (event, data) => callback(data));
   },
+  onAiModelsProgress: (callback) => {
+    ipcRenderer.on('ai-models-progress', (event, data) => callback(data));
+  },
 
   // 监听：主进程通知打开 PDF
   onOpenPdf: (callback) => {

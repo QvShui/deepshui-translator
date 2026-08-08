@@ -27,3 +27,6 @@ release/*.deb
 # API keys (test files)
 test_api_key.txt
 *.key
+
+# API keys (test files)
+apis.csv

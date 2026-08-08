@@ -416,11 +416,13 @@
   // 回填 AI 设置表单
   function fillAiForm(ai) {
     setAiProvider.value = ai.provider || 'deepseek';
-    setAiKey.value = ai.apiKey || '';
+    // 每 provider 独立 key 槽位
+    setAiKey.value = (ai.providerKeys || {})[ai.provider || 'deepseek'] || '';
     setAiDeepThink.value = ai.deepThink || 'off';
     setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
     setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
     setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
+    updateAiKeyPlaceholder(ai.provider || 'deepseek');
     // 模型下拉：有已保存模型则选中，否则空提示
     if (ai.model) {
       if (![...setAiModel.options].some(o => o.value === ai.model)) {
@@ -437,6 +439,17 @@
     }
   }
 
+  // key 输入框占位提示随提供商变化
+  const PROVIDER_HINTS = {
+    deepseek: '粘贴 DeepSeek API Key 后点击右侧刷新拉取模型',
+    qwen: '粘贴 阿里云百炼 API Key 后点击右侧刷新拉取模型',
+    doubao: '粘贴 火山方舟 API Key 后点击右侧刷新拉取模型',
+    kimi: '粘贴 Kimi API Key 后点击右侧刷新拉取模型',
+  };
+  function updateAiKeyPlaceholder(provider) {
+    setAiKey.placeholder = PROVIDER_HINTS[provider] || '粘贴 API Key 后点击右侧刷新拉取模型';
+  }
+
   async function refreshAiModels() {
     const key = setAiKey.value.trim();
     if (!key) {
@@ -447,18 +460,28 @@
     btnAiRefresh.disabled = true;
     aiSettingsStatus.textContent = '拉取模型列表...';
     aiSettingsStatus.className = '';
+    // 多模态检测进度
+    const progressEl = document.getElementById('fulltext-progress');
+    const progressBar = document.getElementById('fulltext-progress-bar');
+    const progressText = document.getElementById('fulltext-progress-text');
+    progressEl.classList.remove('hidden');
+    progressBar.style.width = '0%';
+    progressText.textContent = '正在检测多模态 0%';
     const res = await window.deepshui.aiModels(setAiProvider.value, key);
     btnAiRefresh.disabled = false;
+    progressEl.classList.add('hidden');
     if (res.ok && res.models && res.models.length) {
       setAiModel.innerHTML = '';
       for (const m of res.models) {
         const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
+        opt.value = m.id;
+        // 支持的模型标注 (多模态✅)，value 保持纯模型名
+        opt.textContent = m.multimodal ? `${m.id} (多模态✅)` : m.id;
         setAiModel.appendChild(opt);
       }
       setAiModel.disabled = false;
-      aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型，请选择`;
+      const mmCount = res.models.filter(m => m.multimodal).length;
+      aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型，其中 ${mmCount} 个支持多模态`;
       aiSettingsStatus.className = 'ok';
     } else {
       setAiModel.innerHTML = '<option value="">拉取失败</option>';
@@ -807,11 +830,15 @@
 
   // 自动保存 AI 设置（表单改动即生效，无需手动保存）
   async function autoSaveAi() {
+    const provider = setAiProvider.value;
+    const providerKeys = { ...(currentConfig.ai?.providerKeys || {}) };
+    providerKeys[provider] = setAiKey.value.trim();
     const cfg = {
       ...currentConfig,
       ai: {
-        provider: setAiProvider.value,
-        apiKey: setAiKey.value.trim(),
+        ...currentConfig.ai,
+        provider,
+        providerKeys,
         model: setAiModel.value || '',
         deepThink: setAiDeepThink.value,
         showExplain: setAiExplain.value === 'on',
@@ -826,6 +853,9 @@
 
   // 保存全部设置（翻译引擎 + AI，用于「保存并退出」）
   async function fullSave() {
+    const provider = setAiProvider.value;
+    const providerKeys = { ...(currentConfig.ai?.providerKeys || {}) };
+    providerKeys[provider] = setAiKey.value.trim();
     const cfg = {
       ...currentConfig,
       engine: setEngine.value,
@@ -836,8 +866,9 @@
       deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
       google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
       ai: {
-        provider: setAiProvider.value,
-        apiKey: setAiKey.value.trim(),
+        ...currentConfig.ai,
+        provider,
+        providerKeys,
         model: setAiModel.value || '',
         deepThink: setAiDeepThink.value,
         showExplain: setAiExplain.value === 'on',
@@ -855,10 +886,11 @@
   // 检测是否有未保存的更改（翻译引擎表单 + AI 表单 vs 已保存配置）
   function hasUnsavedChanges() {
     const ai = currentConfig.ai || {};
+    const provider = setAiProvider.value;
     // AI 表单（自动保存，通常无差异，但 key 未失焦时可能未保存）
     const aiChanged =
       setAiProvider.value !== (ai.provider || 'deepseek') ||
-      setAiKey.value.trim() !== (ai.apiKey || '') ||
+      setAiKey.value.trim() !== ((ai.providerKeys || {})[provider] || '') ||
       setAiModel.value !== (ai.model || '') ||
       setAiDeepThink.value !== (ai.deepThink || 'off') ||
       (setAiExplain.value === 'on') !== (ai.showExplain !== false) ||
@@ -948,11 +980,30 @@
   });
 
   // AI 表单改动即自动保存（深度思考/显示开关/模型/Key/提供商）
-  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk].forEach(el => {
+  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk, setAiIsolate].forEach(el => {
     el.addEventListener('change', autoSaveAi);
   });
   setAiModel.addEventListener('change', autoSaveAi);
   setAiKey.addEventListener('change', autoSaveAi); // 失焦时保存
+
+  // 切换提供商：加载该商的 key 到输入框 + 清空模型选择（不同商模型不通用）
+  setAiProvider.addEventListener('change', () => {
+    const ai = currentConfig.ai || {};
+    setAiKey.value = (ai.providerKeys || {})[setAiProvider.value] || '';
+    setAiModel.innerHTML = '<option value="">切换提供商后请重新拉取模型</option>';
+    setAiModel.disabled = true;
+    updateAiKeyPlaceholder(setAiProvider.value);
+  });
+
+  // 多模态检测进度
+  window.deepshui.onAiModelsProgress(({ done, total }) => {
+    const bar = document.getElementById('fulltext-progress-bar');
+    const text = document.getElementById('fulltext-progress-text');
+    if (!bar || !text) return;
+    const pct = Math.round(done / total * 100);
+    bar.style.width = pct + '%';
+    text.textContent = `正在检测多模态 ${done}/${total} (${pct}%)`;
+  });
 
   // AI 问答发送 / 清屏
   aiAskSend.addEventListener('click', () => sendAsk());

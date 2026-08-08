@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');
+const zlib = require('zlib');
 
 // 配置文件: ~/.config/deepshui-translator/config.json (Linux)
 const DEFAULT_CONFIG = () => ({
@@ -20,7 +21,7 @@ const DEFAULT_CONFIG = () => ({
   google: { apiKey: '' },
   ai: {
     provider: 'deepseek',
-    apiKey: '',
+    providerKeys: { deepseek: '', qwen: '', doubao: '', kimi: '' },
     model: '',
     deepThink: 'off',   // off | low | high | max（默认关闭）
     showExplain: false,
@@ -53,6 +54,11 @@ function loadConfig() {
         // 兼容旧配置: thinkingEnabled + reasoningEffort → deepThink
         if (merged.deepThink === undefined && oldAi.thinkingEnabled !== undefined) {
           merged.deepThink = oldAi.thinkingEnabled ? (oldAi.reasoningEffort || 'high') : 'off';
+        }
+        // 兼容旧配置: apiKey → providerKeys.deepseek
+        if (!merged.providerKeys) merged.providerKeys = { ...def.ai.providerKeys };
+        if (oldAi.apiKey && !merged.providerKeys.deepseek) {
+          merged.providerKeys.deepseek = oldAi.apiKey;
         }
         return merged;
       })(),
@@ -281,16 +287,12 @@ function translateWith(engine, text, from, to, cfg) {
   return def.translate(text, from, to, cred);
 }
 
-// ── AI 提供商（可扩展：DeepSeek / OpenAI / Anthropic ...）───
+// ── AI 提供商（DeepSeek / 千问 / 豆包 / Kimi）────────────
 const AI_PROVIDERS = {
-  deepseek: {
-    label: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com',
-    chatPath: '/chat/completions',
-    modelsPath: '/models',
-  },
-  // 未来新增提供商只需在此添加，例如:
-  // openai:   { label: 'OpenAI',   baseUrl: 'https://api.openai.com',      chatPath: '/v1/chat/completions', modelsPath: '/v1/models' },
+  deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', chatPath: '/chat/completions', modelsPath: '/models' },
+  qwen:     { label: '千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode', chatPath: '/chat/completions', modelsPath: '/models' },
+  doubao:   { label: '豆包', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', chatPath: '/chat/completions', modelsPath: '/models' },
+  kimi:     { label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', chatPath: '/chat/completions', modelsPath: '/models' },
 };
 
 function getAiProvider(name) {
@@ -307,13 +309,13 @@ function providerEndpoints(provider) {
   };
 }
 
-// 拉取可用模型列表
+// 拉取可用模型列表（返回带 status 的模型数组，豆包用于过滤停服模型）
 function fetchAiModels(provider, apiKey) {
   const ep = providerEndpoints(provider);
   return new Promise((resolve, reject) => {
     const req = https.get({
       hostname: ep.hostname, path: ep.modelsPath, method: 'GET',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'DeepshuiTranslator/1.2' },
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'DeepshuiTranslator/2.1' },
     }, res => {
       let data = '';
       res.on('data', c => data += c);
@@ -321,7 +323,7 @@ function fetchAiModels(provider, apiKey) {
         try {
           const j = JSON.parse(data);
           if (j.data && Array.isArray(j.data)) {
-            resolve({ ok: true, models: j.data.map(m => m.id) });
+            resolve({ ok: true, models: j.data.map(m => ({ id: m.id, status: m.status })) });
           } else {
             resolve({ ok: false, error: j.error?.message || '模型列表响应异常' });
           }
@@ -331,6 +333,90 @@ function fetchAiModels(provider, apiKey) {
     req.on('error', e => reject(new Error(`网络错误: ${e.message}`)));
     req.setTimeout(10000, () => { req.destroy(); reject(new Error('请求超时 (10s)')); });
   });
+}
+
+// ── 多模态自动检测 ────────────────────────────────────────
+// 最小纯色 PNG 生成（128x128，Node zlib + CRC32）
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])));
+  return Buffer.concat([len, typeBuf, data, crc]);
+}
+function solidPng(r, g, b) {
+  const W = 128, H = 128;
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4);
+  ihdr[8] = 8; ihdr[9] = 2;
+  const raw = Buffer.alloc(H * (1 + W * 3));
+  for (let y = 0; y < H; y++) {
+    raw[y * (1 + W * 3)] = 0;
+    for (let x = 0; x < W; x++) {
+      const o = y * (1 + W * 3) + 1 + x * 3;
+      raw[o] = r; raw[o + 1] = g; raw[o + 2] = b;
+    }
+  }
+  const idat = zlib.deflateSync(raw);
+  return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]).toString('base64');
+}
+
+// 单次多模态探测：发一张纯色图，200 = 支持（真假不管），400 = 不支持
+function probeMultimodal(provider, apiKey, model, pngB64) {
+  const ep = providerEndpoints(provider);
+  const body = JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: '描述这张图片' },
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${pngB64}` } },
+    ]}],
+    max_tokens: 1,
+  });
+  return new Promise((resolve) => {
+    const req = https.request({ hostname: ep.hostname, path: ep.chatPath, method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode === 200));
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(15000, () => { req.destroy(); resolve(false); });
+    req.write(body); req.end();
+  });
+}
+
+// 并发批量检测，onProgress(done, total) 回调
+async function detectMultimodalBatch(provider, apiKey, modelIds, onProgress, concurrency = 8) {
+  const png = solidPng(200, 30, 30);
+  const results = [];
+  let idx = 0, done = 0;
+  async function worker() {
+    while (true) {
+      const i = idx++;
+      if (i >= modelIds.length) break;
+      const id = modelIds[i];
+      const ok = await probeMultimodal(provider, apiKey, id, png);
+      results.push({ id, multimodal: ok });
+      done++;
+      if (onProgress) onProgress(done, modelIds.length);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, modelIds.length || 1) }, () => worker());
+  await Promise.all(workers);
+  return results;
 }
 
 // 流式对话：通过 onEvent 回调推送事件
@@ -527,14 +613,29 @@ ipcMain.handle('save-config', async (event, cfg) => {
 // 进行中的流式请求表: requestId -> AbortController
 const aiAborters = new Map();
 
-// 拉取 AI 提供商可用模型列表（key 优先用渲染层传入的，其次配置文件）
+// 拉取 AI 提供商可用模型列表 + 自动多模态检测
+// key 优先用渲染层传入的，其次配置的 providerKeys
 ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
   const cfg = loadConfig();
-  const key = apiKey || cfg.ai.apiKey;
+  const prov = provider || cfg.ai.provider || 'deepseek';
+  const key = apiKey || cfg.ai.providerKeys?.[prov] || cfg.ai.apiKey;
   if (!key) return { ok: false, error: '未配置 API Key，请到 设置 → AI 引擎 填写' };
   try {
-    const providerCfg = getAiProvider(provider || cfg.ai.provider || 'deepseek');
-    return await fetchAiModels(providerCfg, key);
+    const providerCfg = getAiProvider(prov);
+    const list = await fetchAiModels(providerCfg, key);
+    if (!list.ok) return list;
+
+    // 过滤停服模型（豆包返回 status=Shutdown/Retiring）
+    let candidates = list.models.filter(m => m.status !== 'Shutdown' && m.status !== 'Retiring');
+    if (candidates.length === 0) candidates = list.models.filter(m => m.status !== 'Shutdown');
+    const ids = candidates.map(m => m.id);
+
+    const sender = event.sender;
+    // 并发多模态检测（带进度推送）
+    const results = await detectMultimodalBatch(providerCfg, key, ids, (done, total) => {
+      if (!sender.isDestroyed()) sender.send('ai-models-progress', { done, total });
+    });
+    return { ok: true, models: results };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -544,7 +645,9 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
 ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
   const cfg = loadConfig();
   const ai = cfg.ai;
-  if (!ai.apiKey) return { ok: false, error: '未配置 API Key，请到 设置 → AI 引擎 填写' };
+  const prov = ai.provider || 'deepseek';
+  const apiKey = ai.providerKeys?.[prov] || ai.apiKey;
+  if (!apiKey) return { ok: false, error: '未配置 API Key，请到 设置 → AI 引擎 填写' };
   if (!ai.model) return { ok: false, error: '未选择模型，请到 设置 → AI 引擎 拉取并选择模型' };
 
   const sender = event.sender;
@@ -556,8 +659,8 @@ ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
   };
 
   aiChatStream({
-    provider: getAiProvider(ai.provider || 'deepseek'),
-    apiKey: ai.apiKey,
+    provider: getAiProvider(prov),
+    apiKey,
     model: ai.model,
     messages,
     deepThink: ai.deepThink || 'high',
