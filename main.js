@@ -389,22 +389,22 @@ function solidPng(r, g, b) {
   return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]).toString('base64');
 }
 
-// 单次多模态探测：发一张纯色图，200 = 支持（真假不管），400 = 不支持
-function probeMultimodal(provider, apiKey, model, pngB64) {
+// 单次探测：withImage=false 文本探测（验证模型已开通、真正可对话）
+//           withImage=true  图像探测（验证多模态）
+// 200/429 = 通过（429 说明模型存在仅被限流）；4xx/5xx/超时 = 不可用
+// 注: /models 列表含未开通模型（豆包返回 404，千问返回 400/403），必须实测
+function probeModel(provider, apiKey, model, withImage, pngB64) {
   const ep = providerEndpoints(provider);
-  const body = JSON.stringify({
-    model,
-    messages: [{ role: 'user', content: [
-      { type: 'text', text: '描述这张图片' },
-      { type: 'image_url', image_url: { url: `data:image/png;base64,${pngB64}` } },
-    ]}],
-    max_tokens: 1,
-  });
+  const content = withImage
+    ? [{ type: 'text', text: '描述这张图片' },
+       { type: 'image_url', image_url: { url: `data:image/png;base64,${pngB64}` } }]
+    : 'hi';
+  const body = JSON.stringify({ model, messages: [{ role: 'user', content }], max_tokens: 1 });
   return new Promise((resolve) => {
     const req = https.request({ hostname: ep.hostname, path: ep.chatPath, method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
       res.resume();
-      res.on('end', () => resolve(res.statusCode === 200));
+      res.on('end', () => resolve(res.statusCode === 200 || res.statusCode === 429));
     });
     req.on('error', () => resolve(false));
     req.setTimeout(15000, () => { req.destroy(); resolve(false); });
@@ -412,9 +412,9 @@ function probeMultimodal(provider, apiKey, model, pngB64) {
   });
 }
 
-// 并发批量检测，onProgress(done, total) 回调
-async function detectMultimodalBatch(provider, apiKey, modelIds, onProgress, concurrency = 8) {
-  const png = solidPng(200, 30, 30);
+// 并发批量探测，onProgress(done, total) 回调
+async function probeModelsBatch(provider, apiKey, modelIds, withImage, onProgress, concurrency = 8) {
+  const png = withImage ? solidPng(200, 30, 30) : null;
   const results = [];
   let idx = 0, done = 0;
   async function worker() {
@@ -422,8 +422,8 @@ async function detectMultimodalBatch(provider, apiKey, modelIds, onProgress, con
       const i = idx++;
       if (i >= modelIds.length) break;
       const id = modelIds[i];
-      const ok = await probeMultimodal(provider, apiKey, id, png);
-      results.push({ id, multimodal: ok });
+      const ok = await probeModel(provider, apiKey, id, withImage, png);
+      results.push({ id, ok });
       done++;
       if (onProgress) onProgress(done, modelIds.length);
     }
@@ -677,11 +677,20 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     const ids = candidates.map(m => m.id);
 
     const sender = event.sender;
-    // 并发多模态检测（带进度推送）
-    const results = await detectMultimodalBatch(providerCfg, key, ids, (done, total) => {
-      if (!sender.isDestroyed()) sender.send('ai-models-progress', { done, total });
+    // 阶段1: 文本探测——列表含未开通/无权限模型（实测: 豆包 23 个候选仅 1 个已开通，
+    // 千问也有大量未开通返回 400/403），只保留真正能对话的
+    const chatResults = await probeModelsBatch(providerCfg, key, ids, false, (done, total) => {
+      if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'chat', done, total });
     });
-    return { ok: true, models: results };
+    const chatOkIds = chatResults.filter(r => r.ok).map(r => r.id);
+    if (chatOkIds.length === 0) {
+      return { ok: false, error: '没有可对话的模型（模型可能未在控制台开通，或 API Key 无权限）' };
+    }
+    // 阶段2: 图像探测——在可对话模型中标注多模态
+    const mmResults = await probeModelsBatch(providerCfg, key, chatOkIds, true, (done, total) => {
+      if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'multimodal', done, total });
+    });
+    return { ok: true, models: mmResults.map(r => ({ id: r.id, multimodal: r.ok })) };
   } catch (e) {
     return { ok: false, error: e.message };
   }

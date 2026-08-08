@@ -523,7 +523,7 @@
     const progressText = document.getElementById('fulltext-progress-text');
     progressEl.classList.remove('hidden');
     progressBar.style.width = '0%';
-    progressText.textContent = '正在检测多模态 0%';
+    progressText.textContent = '正在验证模型可用性 0%';
     const res = await window.deepshui.aiModels(setAiProvider.value, key);
     btnAiRefresh.disabled = false;
     progressEl.classList.add('hidden');
@@ -547,7 +547,7 @@
         currentConfig = cfg;
       } catch (e) { /* 保存失败不影响模型列表 */ }
       const mmCount = res.models.filter(m => m.multimodal).length;
-      aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型，其中 ${mmCount} 个支持多模态`;
+      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态`;
       aiSettingsStatus.className = 'ok';
     } else {
       setAiModel.innerHTML = '<option value="">拉取失败</option>';
@@ -1220,14 +1220,15 @@
     updateAiKeyPlaceholder(setAiProvider.value);
   });
 
-  // 多模态检测进度
-  window.deepshui.onAiModelsProgress(({ done, total }) => {
+  // 模型拉取进度（两阶段: 可用性探测 → 多模态探测）
+  window.deepshui.onAiModelsProgress(({ done, total, phase }) => {
     const bar = document.getElementById('fulltext-progress-bar');
     const text = document.getElementById('fulltext-progress-text');
     if (!bar || !text) return;
     const pct = Math.round(done / total * 100);
     bar.style.width = pct + '%';
-    text.textContent = `正在检测多模态 ${done}/${total} (${pct}%)`;
+    const label = phase === 'chat' ? '正在验证模型可用性' : '正在检测多模态';
+    text.textContent = `${label} ${done}/${total} (${pct}%)`;
   });
 
   // AI 问答发送 / 清屏
