@@ -445,7 +445,7 @@
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
     // 总结页数范围回填
     const start = ai.summaryStart || 1;
-    const end = ai.summaryEnd || 30;
+    const end = ai.summaryEnd || 16;
     aiSummaryStart.value = start;
     aiSummaryEnd.value = end;
     // 模型下拉：有已保存模型则选中，否则空提示
@@ -648,7 +648,7 @@
     const myTurn = ++pdfOpenCounter;
     const ai = currentConfig.ai || {};
     const start = Math.max(1, ai.summaryStart || 1);
-    const end = Math.max(start, Math.min(ai.summaryEnd || 30, PdfViewer.pageCount));
+    const end = Math.max(start, Math.min(ai.summaryEnd || 16, PdfViewer.pageCount));
 
     // 重置问答历史（新文档新会话）
     askHistory = [];
@@ -1025,7 +1025,7 @@
   // 保存总结页数范围（提问框旁输入）
   async function saveSummaryRange() {
     let start = parseInt(aiSummaryStart.value) || 1;
-    let end = parseInt(aiSummaryEnd.value) || 30;
+    let end = parseInt(aiSummaryEnd.value) || 16;
     if (start < 1) start = 1;
     if (end < start) end = start;
     const ai = { ...(currentConfig.ai || {}) };
@@ -1241,7 +1241,7 @@
       // 多模态模型：重新渲染页范围图片并总结
       const MM_MAX_PAGES = 16;
       const start = Math.max(1, ai.summaryStart || 1);
-      const end = Math.max(start, Math.min(ai.summaryEnd || 30, PdfViewer.pageCount));
+      const end = Math.max(start, Math.min(ai.summaryEnd || 16, PdfViewer.pageCount));
       if (end - start + 1 > MM_MAX_PAGES) {
         clearAiContent(aiAskContent);
         aiAskContent.textContent =
