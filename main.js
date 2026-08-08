@@ -392,7 +392,9 @@ function solidPng(r, g, b) {
 // 单次探测：withImage=false 文本探测（验证模型已开通、真正可对话）
 //           withImage=true  图像探测（验证多模态）
 // 200/429 = 通过（429 说明模型存在仅被限流）；4xx/5xx/超时 = 不可用
-// 注: /models 列表含未开通模型（豆包返回 404，千问返回 400/403），必须实测
+// 注1: /models 列表含未开通模型（豆包返回 404，千问返回 400/403），必须实测
+// 注2: 图像探测只看状态码——有的网关对文本模型静默丢弃图片仍返回 200
+//      （实测: 千问列表里的 deepseek-r1），多模态标注可能误标，UI 已加提示
 function probeModel(provider, apiKey, model, withImage, pngB64) {
   const ep = providerEndpoints(provider);
   const content = withImage

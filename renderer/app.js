@@ -550,7 +550,7 @@
         currentConfig = cfg;
       } catch (e) { /* 保存失败不影响模型列表 */ }
       const mmCount = res.models.filter(m => m.multimodal).length;
-      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态`;
+      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态。部分模型可能被误标为支持多模态，请注意甄别`;
       aiSettingsStatus.className = 'ok';
     } else {
       setAiModel.innerHTML = '<option value="">拉取失败</option>';
