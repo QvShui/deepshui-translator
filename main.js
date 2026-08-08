@@ -396,6 +396,8 @@ function solidPng(r, g, b) {
 // 注1: /models 列表含未开通模型（豆包返回 404，千问返回 400/403），必须实测
 // 注2: 图像探测只看状态码——有的网关对文本模型静默丢弃图片仍返回 200
 //      （实测: 千问列表里的 deepseek-r1），多模态标注可能误标，UI 已加提示
+// 注3: 图像探测只认 200——429 限流时保守判不支持（误标多模态会把图发给文本模型导致报错，
+//      漏标只是退化为文本总结，保守方向更安全）；文本探测 429 仍判存活
 function probeModel(provider, apiKey, model, withImage, pngB64) {
   const ep = providerEndpoints(provider);
   const content = withImage
@@ -407,7 +409,7 @@ function probeModel(provider, apiKey, model, withImage, pngB64) {
     const req = https.request({ hostname: ep.hostname, path: ep.chatPath, method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
       res.resume();
-      res.on('end', () => resolve(res.statusCode === 200 || res.statusCode === 429));
+      res.on('end', () => resolve(res.statusCode === 200 || (!withImage && res.statusCode === 429)));
     });
     req.on('error', () => resolve(false));
     req.setTimeout(15000, () => { req.destroy(); resolve(false); });
@@ -454,6 +456,14 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
 
   const startTime = Date.now();
   let thinkingActive = false;
+  // 终态事件(done/end/error)只发一次——此前 done 后还会发 end，渲染层重复 finalize，
+  // 且取消后迟到的 end 会竞态打断新轮次
+  let terminated = false;
+  const terminate = (evt) => {
+    if (terminated) return;
+    terminated = true;
+    onEvent(evt);
+  };
 
   const req = https.request({
     hostname: ep.hostname, path: ep.chatPath, method: 'POST',
@@ -479,13 +489,14 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
         } catch {
           if (errBuf.trim()) msg += `: ${errBuf.slice(0, 300)}`;
         }
-        onEvent({ type: 'error', message: msg });
+        terminate({ type: 'error', message: msg });
       });
       return;
     }
     let buffer = '';
     res.setEncoding('utf8');
     res.on('data', chunk => {
+      if (terminated) return;
       buffer += chunk;
       let idx;
       while ((idx = buffer.indexOf('\n')) !== -1) {
@@ -494,15 +505,15 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
         if (!line.startsWith('data:')) continue;
         const payload = line.slice(5).trim();
         if (payload === '[DONE]') {
-          onEvent({ type: 'done' });
-          continue;
+          terminate({ type: 'done' });
+          break;
         }
         try {
           const j = JSON.parse(payload);
           // 流式响应中也可能嵌入错误对象（此前被静默忽略）
           if (j.error) {
-            onEvent({ type: 'error', message: j.error.message || 'API 返回错误' });
-            continue;
+            terminate({ type: 'error', message: j.error.message || 'API 返回错误' });
+            break;
           }
           const delta = j.choices?.[0]?.delta || {};
           if (delta.reasoning_content) {
@@ -524,21 +535,24 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
       }
     });
     res.on('end', () => {
+      if (terminated) return;
       if (thinkingActive) {
+        thinkingActive = false;
         onEvent({ type: 'think-done', seconds: ((Date.now() - startTime) / 1000).toFixed(1) });
       }
-      onEvent({ type: 'end' });
+      terminate({ type: 'end' });
     });
   });
 
   req.on('error', e => {
     if (e.name === 'AbortError') {
-      onEvent({ type: 'error', message: '已取消' });
+      terminate({ type: 'error', message: '已取消' });
     } else {
-      onEvent({ type: 'error', message: `网络错误: ${e.message}` });
+      terminate({ type: 'error', message: `网络错误: ${e.message}` });
     }
   });
-  req.setTimeout(60000, () => { req.destroy(new Error('请求超时 (60s)')); });
+  // socket 空闲计时（有数据流动自动重置）：大图总结服务端处理较慢，放宽到 180s
+  req.setTimeout(180000, () => { req.destroy(new Error('请求超时 (180s)')); });
   req.write(body);
   req.end();
 }

@@ -325,6 +325,18 @@ const PdfViewer = (() => {
     return lo + 1;
   }
 
+  // 拼接 text items：拉丁词边界补空格（修复跨 item 单词粘连），CJK 不受影响
+  function joinTextItems(items) {
+    let out = '';
+    for (const it of items) {
+      const s = it.str || '';
+      if (out && s && /[A-Za-z0-9]$/.test(out) && /^[A-Za-z0-9]/.test(s)) out += ' ';
+      out += s;
+      if (it.hasEOL) out += '\n';
+    }
+    return out;
+  }
+
   // 清洗选中文本：还原断词连字符、换行转空格、压缩空白
   function cleanSelectionText(raw) {
     return raw
@@ -495,6 +507,8 @@ const PdfViewer = (() => {
       console.error('检测图片区域失败:', e);
       return;
     }
+    // await 期间可能已退出选图模式或页面被回收 → 放弃绘制，避免残留热区
+    if (!imageSelectActive || !wrapper.isConnected) return;
     const page = await pdfDoc.getPage(pageNum);
     const pageHeight1 = page.getViewport({ scale: 1 }).height;
     const cssScale = scale;
@@ -679,7 +693,7 @@ const PdfViewer = (() => {
     for (let p = start; p <= end; p++) {
       const page = await pdfDoc.getPage(p);
       const tc = await page.getTextContent();
-      full += tc.items.map(i => i.str).join('') + '\n';
+      full += joinTextItems(tc.items) + '\n';
       count++;
       // 进度回调 + 让出主线程
       if (count % 10 === 0) {

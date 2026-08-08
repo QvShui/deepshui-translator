@@ -328,7 +328,20 @@
         { role: 'user', content: text },
       ];
     }
-    await window.deepshui.aiChat('explain', messages, 'explain');
+    // 主进程拒绝请求（未配置 key/模型等）时恢复状态并提示，否则解释锁死无提示
+    let res;
+    try {
+      res = await window.deepshui.aiChat('explain', messages, 'explain');
+    } catch (e) {
+      res = { ok: false, error: e.message || '请求发送失败' };
+    }
+    if (!res.ok) {
+      aiExplainRunning = false;
+      aiExplainShares = false;
+      explainPendingText = '';
+      clearAiContent(aiExplainContent);
+      aiExplainContent.textContent = '⚠️ ' + (res.error || '请求失败');
+    }
   }
 
   // 打断 AI 解释（划线变化时调用）
@@ -445,7 +458,12 @@
 
     // 标记本轮进行中（handleAskEvent 据此防止 done/end 双重 finalize）
     askTurnActive = true;
-    const res = await window.deepshui.aiChat('ask', messages, 'ask');
+    let res;
+    try {
+      res = await window.deepshui.aiChat('ask', messages, 'ask');
+    } catch (e) {
+      res = { ok: false, error: e.message || '请求发送失败' };
+    }
     if (!res.ok) {
       // 主进程拒绝请求（未配置 key/模型等）：恢复状态并提示
       askTurnActive = false;
@@ -707,11 +725,8 @@
   // PDF 打开后：提取全文（带进度）→ 重置问答历史 → 自动总结（若 AI 可用）
   async function handlePdfOpened() {
     const myTurn = ++pdfOpenCounter;
-    const ai = currentConfig.ai || {};
-    const start = Math.max(1, ai.summaryStart || 1);
-    const end = Math.max(start, Math.min(ai.summaryEnd || 16, PdfViewer.pageCount));
 
-    // 新文档: 页数输入框锁定实际页数; 清空已发送图片缓存
+    // 新文档: 页数输入框锁定实际页数(持久化); 清空已发送图片缓存
     clampSummaryInputsToDoc();
     sentImageMap.clear();
 
@@ -720,6 +735,12 @@
     askCurrentAnswer = '';
     clearAiContent(aiAskContent);
     aiAskStatus.textContent = '';
+
+    const ai = currentConfig.ai || {};
+    // 防御: 起始/结束页锁定到实际页数（旧配置可能超出新文档，getPage 会抛异常）
+    const pc = PdfViewer.pageCount || 1;
+    const start = Math.min(Math.max(1, ai.summaryStart || 1), pc);
+    const end = Math.max(start, Math.min(ai.summaryEnd || 16, pc));
 
     // 多模态模型：渲染页范围为网格图上传总结（不注入全文文本）
     // 多模态总开关关闭时走文本提取路径
@@ -742,13 +763,21 @@
       for (let p = start; p <= end; p++) pageNums.push(p);
       const grids = [];
       const BATCH = 4; // 每 4 页拼一张网格图，控制图片数量
-      for (let i = 0; i < pageNums.length; i += BATCH) {
+      try {
+        for (let i = 0; i < pageNums.length; i += BATCH) {
+          if (myTurn !== pdfOpenCounter) return;
+          const batch = pageNums.slice(i, i + BATCH);
+          fulltextProgressText.textContent =
+            `正在渲染页面 ${batch[0]}-${batch[batch.length - 1]} (${Math.min(i + BATCH, pageNums.length)}/${pageNums.length})`;
+          const grid = await PdfViewer.renderPagesToGrid(batch, 2, 1.0);
+          if (grid) grids.push({ dataUrl: grid, label: `第${batch[0]}-${batch[batch.length - 1]}页` });
+        }
+      } catch (e) {
         if (myTurn !== pdfOpenCounter) return;
-        const batch = pageNums.slice(i, i + BATCH);
-        fulltextProgressText.textContent =
-          `正在渲染页面 ${batch[0]}-${batch[batch.length - 1]} (${Math.min(i + BATCH, pageNums.length)}/${pageNums.length})`;
-        const grid = await PdfViewer.renderPagesToGrid(batch, 2, 1.0);
-        if (grid) grids.push({ dataUrl: grid, label: `第${batch[0]}-${batch[batch.length - 1]}页` });
+        fulltextProgress.classList.add('hidden');
+        clearAiContent(aiAskContent);
+        aiAskContent.textContent = '⚠️ 页面渲染失败: ' + e.message;
+        return;
       }
       fulltextProgress.classList.add('hidden');
       if (myTurn !== pdfOpenCounter) return;
@@ -767,12 +796,21 @@
     fulltextProgressText.textContent = '正在提取全文 0%';
 
     setTimeout(async () => {
-      const text = await PdfViewer.extractFullText(({ current, total }) => {
+      let text;
+      try {
+        text = await PdfViewer.extractFullText(({ current, total }) => {
+          if (myTurn !== pdfOpenCounter) return;
+          const pct = Math.round(current / total * 100);
+          fulltextProgressBar.style.width = pct + '%';
+          fulltextProgressText.textContent = `正在提取全文 ${current}/${total} (${pct}%)`;
+        }, { start, end });
+      } catch (e) {
         if (myTurn !== pdfOpenCounter) return;
-        const pct = Math.round(current / total * 100);
-        fulltextProgressBar.style.width = pct + '%';
-        fulltextProgressText.textContent = `正在提取全文 ${current}/${total} (${pct}%)`;
-      }, { start, end });
+        fulltextProgress.classList.add('hidden');
+        clearAiContent(aiAskContent);
+        aiAskContent.textContent = '⚠️ 全文提取失败: ' + e.message;
+        return;
+      }
       if (myTurn !== pdfOpenCounter) return; // 已打开新 PDF，丢弃
       fullText = text;
       fulltextProgress.classList.add('hidden');
@@ -1304,12 +1342,18 @@
   });
 
   // AI 问答发送 / 清屏
-  aiAskSend.addEventListener('click', () => sendAsk(undefined, false, takeAskImages()));
+  // 先校验再取图：空提示词直接返回，图片保留在附件区（修复空词发送吞图）
+  function sendAskFromBox() {
+    const q = aiAskBox.value.trim();
+    if (!q || aiAskRunning) return;
+    sendAsk(q, false, takeAskImages());
+  }
+  aiAskSend.addEventListener('click', sendAskFromBox);
   aiAskBox.addEventListener('keydown', (e) => {
     // Enter 发送，Shift+Enter 换行
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendAsk(undefined, false, takeAskImages());
+      sendAskFromBox();
     }
   });
 
@@ -1366,15 +1410,24 @@
       }
       clearAiContent(aiAskContent);
       aiAskContent.textContent = '已重置对话，正在渲染页面...';
+      const pc2 = PdfViewer.pageCount || 1;
+      const startC = Math.min(start, pc2);
+      const endC = Math.max(startC, Math.min(end, pc2));
       const pageNums = [];
-      for (let p = start; p <= end; p++) pageNums.push(p);
+      for (let p = startC; p <= endC; p++) pageNums.push(p);
       const grids = [];
       const BATCH = 4;
-      for (let i = 0; i < pageNums.length; i += BATCH) {
-        const batch = pageNums.slice(i, i + BATCH);
-        aiAskContent.textContent = `已重置对话，正在渲染页面 ${batch[0]}-${batch[batch.length - 1]}...`;
-        const grid = await PdfViewer.renderPagesToGrid(batch, 2, 1.0);
-        if (grid) grids.push({ dataUrl: grid });
+      try {
+        for (let i = 0; i < pageNums.length; i += BATCH) {
+          const batch = pageNums.slice(i, i + BATCH);
+          aiAskContent.textContent = `已重置对话，正在渲染页面 ${batch[0]}-${batch[batch.length - 1]}...`;
+          const grid = await PdfViewer.renderPagesToGrid(batch, 2, 1.0);
+          if (grid) grids.push({ dataUrl: grid });
+        }
+      } catch (e) {
+        clearAiContent(aiAskContent);
+        aiAskContent.textContent = '⚠️ 页面渲染失败: ' + e.message;
+        return;
       }
       if (grids.length) {
         sendAsk('请阅读并理解上面的文章页面，然后用中文总结这些页面的核心内容，之后我会继续向你提问。', true, grids);
