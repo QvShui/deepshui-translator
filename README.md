@@ -68,7 +68,7 @@ wget https://github.com/QvShui/deepshui-translator/releases/download/v2.0.2/deep
 sudo dpkg -i deepshui-translator_2.0.2_Debian-Trixie_amd64.deb
 ```
 
-> macOS 安装包由 GitHub Actions 自动构建（push tag `v*` 触发）。
+> Linux 安装包在 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases) 下载。macOS/Windows 用户请自行从源码构建（见下）。
 
 ## 🛠️ 从源码构建
 
@@ -78,6 +78,8 @@ sudo dpkg -i deepshui-translator_2.0.2_Debian-Trixie_amd64.deb
 | Linux (通用) | `npm run dist:appimage` | `.AppImage` |
 | Windows | `npm run dist:win` | `.exe` (NSIS) |
 | macOS | `npm run dist:mac` | `.dmg` |
+
+> macOS 的 `.dmg` 只能在 macOS 上构建（Apple 限制）；Windows 的 `.exe` 需在 Windows 上构建。
 
 ### 国内网络加速
 
@@ -100,8 +102,7 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 │   ├── pdfjs/           # PDF.js 本地库
 │   └── lib/             # marked / KaTeX / DOMPurify（Markdown+公式渲染）
 ├── assets/              # 应用图标
-├── build/               # deb 安装后脚本（sandbox 权限修复）
-└── .github/workflows/   # macOS 自动构建（push tag 触发）
+└── build/               # deb 安装后脚本（sandbox 权限修复）
 ```
 
 ## 📜 开源协议
