@@ -120,9 +120,14 @@
 
   // 已发送图片的 dataUrl 表（问答区渲染用）：markdown 里只放占位图，
   // 渲染后按 alt 标记换回真实 dataUrl，避免 MB 级字符串参与每次流式重渲染
-  const sentImageMap = new Map();  // 'askimg-N' -> dataUrl
+  let sentImageMap = new Map();  // 'askimg-N' -> dataUrl（随会话切换替换引用）
   let sentImgSeq = 0;
   const ASK_IMG_PLACEHOLDER = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  // 按模型保存会话（内存版，绑定当前 PDF）: 'provider/model' -> 快照
+  // 切换模型: 存当前会话 → 恢复目标会话（无则开新会话并自动总结）
+  const sessionStore = new Map();
+  let currentSessionKey = null;
 
   // 设置面板 AI DOM
   const setAiProvider = document.getElementById('set-ai-provider');
@@ -696,6 +701,8 @@
     // AI 配置回填
     fillAiForm(cfg.ai || {});
     applyAiVisibility();
+    // 会话归属当前模型（按模型保存会话）
+    currentSessionKey = (cfg.ai && cfg.ai.model) ? `${cfg.ai.provider || 'deepseek'}/${cfg.ai.model}` : null;
 
     // 检查默认引擎凭证
     const cred = cfg[cfg.engine] || {};
@@ -723,7 +730,9 @@
   }
 
   // PDF 打开后：提取全文（带进度）→ 重置问答历史 → 自动总结（若 AI 可用）
-  async function handlePdfOpened() {
+  async function handlePdfOpened(opts) {
+    const keepSessions = !!(opts && opts.keepSessions);
+    if (!keepSessions) sessionStore.clear();  // 真·新文档: 清空所有模型会话
     const myTurn = ++pdfOpenCounter;
 
     // 新文档: 页数输入框锁定实际页数(持久化); 清空已发送图片缓存
@@ -737,6 +746,9 @@
     aiAskStatus.textContent = '';
 
     const ai = currentConfig.ai || {};
+    if (!keepSessions) {
+      currentSessionKey = ai.model ? `${ai.provider || 'deepseek'}/${ai.model}` : null;
+    }
     // 防御: 起始/结束页锁定到实际页数（旧配置可能超出新文档，getPage 会抛异常）
     const pc = PdfViewer.pageCount || 1;
     const start = Math.min(Math.max(1, ai.summaryStart || 1), pc);
@@ -1143,6 +1155,61 @@
     }
   }
 
+  // 按模型切换会话：保存旧模型会话 → 恢复新模型会话（无则开新会话自动总结）
+  function switchSession(oldKey, newKey) {
+    cancelAsk();
+    cancelExplain();
+    // 1. 保存当前会话快照
+    if (oldKey) {
+      sessionStore.set(oldKey, {
+        askHistory, fullText, sentImageMap, askImages,
+        raw: aiAskContent.__raw || '',
+      });
+    }
+    // 2. 恢复目标会话（策略 A：原样恢复，不补充上下文）
+    const s = sessionStore.get(newKey);
+    if (s) {
+      askHistory = s.askHistory;
+      fullText = s.fullText;
+      sentImageMap = s.sentImageMap;
+      askImages = s.askImages;
+      askCurrentAnswer = '';
+      aiAskContent.__raw = s.raw;
+      renderMarkdownTo(aiAskContent, s.raw);  // 含已发图片的 alt 标记回填
+      aiAskContent.scrollTop = aiAskContent.scrollHeight;
+      renderAskImages();
+      const rounds = s.askHistory.filter(m => m.role === 'user').length;
+      aiAskStatus.textContent = `已恢复该模型的会话（${rounds} 轮历史）`;
+      setTimeout(() => {
+        if (aiAskStatus.textContent.startsWith('已恢复')) aiAskStatus.textContent = '';
+      }, 3000);
+      return;
+    }
+    // 3. 无历史 → 开新会话：全新状态，复用文档打开流程自动总结
+    //    （handlePdfOpened 会重建 askHistory/fullText/显示，并 bump pdfOpenCounter 打断旧渲染）
+    askImages = [];
+    renderAskImages();
+    sentImageMap = new Map();
+    if (PdfViewer.pageCount > 0) {
+      handlePdfOpened({ keepSessions: true });
+    } else {
+      askHistory = [];
+      askCurrentAnswer = '';
+      fullText = '';
+      clearAiContent(aiAskContent);
+      aiAskStatus.textContent = '';
+    }
+  }
+
+  // 配置保存后检查模型是否变化，变化则切换会话
+  function maybeSwitchSession(cfg) {
+    const newKey = cfg.ai && cfg.ai.model ? `${cfg.ai.provider || 'deepseek'}/${cfg.ai.model}` : null;
+    if (newKey && newKey !== currentSessionKey) {
+      switchSession(currentSessionKey, newKey);
+      currentSessionKey = newKey;
+    }
+  }
+
   // 自动保存 AI 设置（表单改动即生效，无需手动保存）
   async function autoSaveAi() {
     const provider = setAiProvider.value;
@@ -1164,6 +1231,7 @@
     };
     await window.deepshui.saveConfig(cfg);
     currentConfig = cfg;
+    maybeSwitchSession(cfg);
     applyAiVisibility();
   }
 
@@ -1214,6 +1282,7 @@
     currentConfig = cfg;
     targetLang.value = cfg.targetLang;
     engineSelect.value = cfg.engine;
+    maybeSwitchSession(cfg);
     applyAiVisibility();
   }
 
