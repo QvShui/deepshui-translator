@@ -784,7 +784,7 @@
     // 顶部提示条（含退出按钮）
     selectTipEl = document.createElement('div');
     selectTipEl.id = 'image-select-tip';
-    selectTipEl.innerHTML = '<span>🖼 点击 PDF 中的蓝色区域选择图片（可多选）</span><button id="image-select-done">完成</button>';
+    selectTipEl.innerHTML = '<span>🖼 点击蓝色区域选择位图，或直接拖拽框选任意区域（可多选）</span><button id="image-select-done">完成</button>';
     document.body.appendChild(selectTipEl);
     document.getElementById('image-select-done').addEventListener('click', exitImageSelectMode);
 

@@ -525,11 +525,93 @@ const PdfViewer = (() => {
     }
   }
 
-  // 退出选图模式: 移除所有热区
+  // 退出选图模式: 移除所有热区 + 清理进行中的框选
   function exitImageSelectMode() {
     imageSelectActive = false;
     imageSelectCallback = null;
     viewerEl.querySelectorAll('.image-hotspot').forEach(el => el.remove());
+    if (dragState) {
+      if (dragState.rectEl) dragState.rectEl.remove();
+      dragState = null;
+      window.removeEventListener('mousemove', onSelectMouseMove);
+    }
+  }
+
+  // ── 自由框选（选图模式内，矢量图/任意区域可用）──────
+  // 拖拽画矩形选区，松开把区域页面坐标交给回调（与位图热区并存：
+  // 点热区 = 选位图，拖拽 = 框选任意区域）
+  let dragState = null;  // { wrapper, pageNum, startX, startY, rectEl }
+
+  function onSelectMouseDown(e) {
+    if (!imageSelectActive || e.button !== 0) return;
+    // 点在图片热区上 → 交给热区 click 处理
+    if (e.target.classList && e.target.classList.contains('image-hotspot')) return;
+    const wrapper = e.target.closest ? e.target.closest('.page-wrapper') : null;
+    if (!wrapper) return;
+    e.preventDefault();  // 阻止文本选择
+    const rect = wrapper.getBoundingClientRect();
+    dragState = {
+      wrapper,
+      pageNum: parseInt(wrapper.dataset.page),
+      startX: e.clientX - rect.left,
+      startY: e.clientY - rect.top,
+      rectEl: null,
+    };
+    window.addEventListener('mousemove', onSelectMouseMove);
+    window.addEventListener('mouseup', onSelectMouseUp, { once: true });
+  }
+
+  function dragRect(ds, e) {
+    const r = ds.wrapper.getBoundingClientRect();
+    // 限制在页面范围内（不跨页）
+    const curX = Math.max(0, Math.min(e.clientX - r.left, r.width));
+    const curY = Math.max(0, Math.min(e.clientY - r.top, r.height));
+    return {
+      x: Math.min(ds.startX, curX),
+      y: Math.min(ds.startY, curY),
+      w: Math.abs(curX - ds.startX),
+      h: Math.abs(curY - ds.startY),
+    };
+  }
+
+  function onSelectMouseMove(e) {
+    if (!dragState) return;
+    if (!dragState.wrapper.isConnected) { dragState = null; return; }  // 页面被回收
+    const { x, y, w, h } = dragRect(dragState, e);
+    if (!dragState.rectEl && w > 4 && h > 4) {
+      const el = document.createElement('div');
+      el.className = 'region-select-rect';
+      dragState.wrapper.appendChild(el);
+      dragState.rectEl = el;
+    }
+    if (dragState.rectEl) {
+      dragState.rectEl.style.left = x + 'px';
+      dragState.rectEl.style.top = y + 'px';
+      dragState.rectEl.style.width = w + 'px';
+      dragState.rectEl.style.height = h + 'px';
+    }
+  }
+
+  async function onSelectMouseUp(e) {
+    window.removeEventListener('mousemove', onSelectMouseMove);
+    if (!dragState) return;
+    const ds = dragState;
+    dragState = null;
+    if (!ds.rectEl) return;  // 单击未拖动 → 不处理
+    const { x, y, w, h } = dragRect(ds, e);
+    ds.rectEl.remove();
+    if (!ds.wrapper.isConnected) return;
+    if (w < 8 || h < 8) return;  // 过小忽略
+    // CSS 坐标(y向下) → 页面坐标(scale=1, y向上)
+    const page = await pdfDoc.getPage(ds.pageNum);
+    const pageHeight1 = page.getViewport({ scale: 1 }).height;
+    const bbox = {
+      x: x / scale,
+      y: pageHeight1 - (y + h) / scale,
+      w: w / scale,
+      h: h / scale,
+    };
+    if (imageSelectCallback) imageSelectCallback(ds.pageNum, bbox);
   }
 
   // ── 事件绑定 ─────────────────────────────
@@ -562,6 +644,9 @@ const PdfViewer = (() => {
       const text = cleanSelectionText(sel.toString());
       if (text && onTextSelect) onTextSelect(text);
     });
+
+    // 自由框选（选图模式下拖拽选区）
+    viewerEl.addEventListener('mousedown', onSelectMouseDown);
 
     // 窗口 resize：fit 模式自适应
     window.addEventListener('resize', handleResize);
