@@ -330,6 +330,7 @@
   }
 
   // AI 问答
+  let askTurnActive = false;    // 每轮问答只 finalize 一次（done 和 end 都会触发，防止重复入历史）
   function handleAskEvent(type, text, seconds, usage, message) {
     switch (type) {
       case 'think-start':
@@ -346,6 +347,8 @@
         break;
       case 'done':
       case 'end':
+        if (!askTurnActive) break;  // done 之后还有 end，只处理一次
+        askTurnActive = false;
         if (aiAskStatus.textContent === '正在思考...') {
           aiAskStatus.textContent = '已思考';
         }
@@ -354,11 +357,14 @@
         aiAskSend.disabled = false;
         aiAskBox.disabled = false;
         finalizeAiContent(aiAskContent);
-        // 只保存本轮回答到历史（修复历史重复累积）
-        askHistory.push({ role: 'assistant', content: askCurrentAnswer });
+        // 只保存本轮回答到历史（修复历史重复累积）；空回答不入历史（Kimi 会拒绝空 assistant 消息）
+        if (askCurrentAnswer.trim()) {
+          askHistory.push({ role: 'assistant', content: askCurrentAnswer });
+        }
         askCurrentAnswer = '';
         break;
-      case 'error':
+      case 'error': {
+        askTurnActive = false;
         aiAskRunning = false;
         aiAskStatus.textContent = '';
         aiAskStatus.className = 'ai-status';
@@ -366,8 +372,14 @@
         aiAskBox.disabled = false;
         if (message !== '已取消') {
           appendAiContent(aiAskContent, '\n⚠️ ' + message);
+          // 请求失败：移除历史中未获回答的用户消息，保持历史交替结构有效
+          if (askHistory.length && askHistory[askHistory.length - 1].role === 'user') {
+            askHistory.pop();
+          }
         }
+        askCurrentAnswer = '';
         break;
+      }
     }
   }
 
@@ -409,7 +421,20 @@
     }
     messages.push(...historyCopy);
 
-    await window.deepshui.aiChat('ask', messages, 'ask');
+    // 标记本轮进行中（handleAskEvent 据此防止 done/end 双重 finalize）
+    askTurnActive = true;
+    const res = await window.deepshui.aiChat('ask', messages, 'ask');
+    if (!res.ok) {
+      // 主进程拒绝请求（未配置 key/模型等）：恢复状态并提示
+      askTurnActive = false;
+      aiAskRunning = false;
+      aiAskSend.disabled = false;
+      aiAskBox.disabled = false;
+      appendAiContent(aiAskContent, '\n⚠️ ' + (res.error || '请求失败'));
+      if (askHistory.length && askHistory[askHistory.length - 1].role === 'user') {
+        askHistory.pop();
+      }
+    }
   }
 
   // 打断问答（新提问时替换旧回答）
@@ -417,6 +442,8 @@
     if (aiAskRunning) {
       window.deepshui.aiCancel('ask');
       aiAskRunning = false;
+      askTurnActive = false;   // 防止后续 end 事件重复 finalize
+      askCurrentAnswer = '';   //  cancelled 轮的回答不入历史（aiCancel 的 error 事件不含内容）
       aiAskStatus.textContent = '';
       aiAskStatus.className = 'ai-status';
       aiAskSend.disabled = false;
@@ -443,9 +470,14 @@
     setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
     setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
-    // 总结页数范围回填
-    const start = ai.summaryStart || 1;
-    const end = ai.summaryEnd || 16;
+    // 总结页数范围回填（clamp 到 PDF 实际页数）
+    let start = ai.summaryStart || 1;
+    let end = ai.summaryEnd || 16;
+    const maxPage = (typeof PdfViewer !== 'undefined' && PdfViewer.pageCount) || 0;
+    if (maxPage > 0) {
+      if (start > maxPage) start = maxPage;
+      if (end > maxPage) end = maxPage;
+    }
     aiSummaryStart.value = start;
     aiSummaryEnd.value = end;
     // 模型下拉：有已保存模型则选中，否则空提示
@@ -1027,7 +1059,16 @@
     let start = parseInt(aiSummaryStart.value) || 1;
     let end = parseInt(aiSummaryEnd.value) || 16;
     if (start < 1) start = 1;
+    // 超出 PDF 实际页数时 clamp（仅在已打开 PDF 时）
+    const maxPage = PdfViewer.pageCount || 0;
+    if (maxPage > 0) {
+      if (start > maxPage) start = maxPage;
+      if (end > maxPage) end = maxPage;
+    }
     if (end < start) end = start;
+    // 回写 clamp 后的值，让用户看到生效范围
+    aiSummaryStart.value = start;
+    aiSummaryEnd.value = end;
     const ai = { ...(currentConfig.ai || {}) };
     if (ai.summaryStart === start && ai.summaryEnd === end) return;
     const cfg = { ...currentConfig, ai: { ...ai, summaryStart: start, summaryEnd: end } };

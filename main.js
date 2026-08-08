@@ -292,7 +292,7 @@ function translateWith(engine, text, from, to, cfg) {
 // ── AI 提供商（DeepSeek / 千问 / 豆包 / Kimi）────────────
 const AI_PROVIDERS = {
   deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', chatPath: '/chat/completions', modelsPath: '/models' },
-  qwen:     { label: '千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode', chatPath: '/chat/completions', modelsPath: '/models' },
+  qwen:     { label: '千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatPath: '/chat/completions', modelsPath: '/models' },
   doubao:   { label: '豆包', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', chatPath: '/chat/completions', modelsPath: '/models' },
   kimi:     { label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', chatPath: '/chat/completions', modelsPath: '/models' },
 };
@@ -322,10 +322,22 @@ function fetchAiModels(provider, apiKey) {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
+        // 非 200：透出真实错误（此前空响应体会被报成“解析失败”，误导排查）
+        if (res.statusCode !== 200) {
+          let msg = `HTTP ${res.statusCode}`;
+          try {
+            const j = JSON.parse(data);
+            if (j.error?.message) msg += `: ${j.error.message}`;
+            else if (j.message) msg += `: ${j.message}`;
+          } catch { /* 空响应体等 */ }
+          resolve({ ok: false, error: msg });
+          return;
+        }
         try {
           const j = JSON.parse(data);
           if (j.data && Array.isArray(j.data)) {
-            resolve({ ok: true, models: j.data.map(m => ({ id: m.id, status: m.status })) });
+            // out 字段: 豆包特有的输出模态（过滤视频/图像/3D 模型用）
+            resolve({ ok: true, models: j.data.map(m => ({ id: m.id, status: m.status, out: m.modalities?.output_modalities })) });
           } else {
             resolve({ ok: false, error: j.error?.message || '模型列表响应异常' });
           }
@@ -450,6 +462,24 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
     },
     signal,
   }, res => {
+    // 非 200 响应：读取错误正文并作为 error 事件上报（此前会被当 SSE 解析而静默吞掉）
+    if (res.statusCode !== 200) {
+      let errBuf = '';
+      res.setEncoding('utf8');
+      res.on('data', c => errBuf += c);
+      res.on('end', () => {
+        let msg = `HTTP ${res.statusCode}`;
+        try {
+          const j = JSON.parse(errBuf);
+          if (j.error?.message) msg += `: ${j.error.message}`;
+          else if (j.message) msg += `: ${j.message}`;
+        } catch {
+          if (errBuf.trim()) msg += `: ${errBuf.slice(0, 300)}`;
+        }
+        onEvent({ type: 'error', message: msg });
+      });
+      return;
+    }
     let buffer = '';
     res.setEncoding('utf8');
     res.on('data', chunk => {
@@ -466,6 +496,11 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
         }
         try {
           const j = JSON.parse(payload);
+          // 流式响应中也可能嵌入错误对象（此前被静默忽略）
+          if (j.error) {
+            onEvent({ type: 'error', message: j.error.message || 'API 返回错误' });
+            continue;
+          }
           const delta = j.choices?.[0]?.delta || {};
           if (delta.reasoning_content) {
             if (!thinkingActive) {
@@ -630,6 +665,15 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     // 过滤停服模型（豆包返回 status=Shutdown/Retiring）
     let candidates = list.models.filter(m => m.status !== 'Shutdown' && m.status !== 'Retiring');
     if (candidates.length === 0) candidates = list.models.filter(m => m.status !== 'Shutdown');
+    // 过滤非对话模型（豆包/千问的列表会混入视频/图像/3D/向量/语音模型）：
+    // 1) output_modalities 存在且不含 text → 非对话
+    // 2) 名称含已知非对话类型 → 非对话
+    const NON_CHAT_PATTERN = /seedance|seedream|embedding|hyper3d|hitem3d|seed3d|3d-gen|rerank|(^|[-_])(image|tts|asr|audio|ocr)([-_.]|$)/i;
+    candidates = candidates.filter(m => {
+      if (Array.isArray(m.out) && m.out.length && !m.out.includes('text')) return false;
+      if (NON_CHAT_PATTERN.test(m.id)) return false;
+      return true;
+    });
     const ids = candidates.map(m => m.id);
 
     const sender = event.sender;
