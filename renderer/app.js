@@ -118,6 +118,12 @@
   let askImages = [];   // [{ page, bbox, dataUrl, label }]
   let imageSelectMode = false;
 
+  // 已发送图片的 dataUrl 表（问答区渲染用）：markdown 里只放占位图，
+  // 渲染后按 alt 标记换回真实 dataUrl，避免 MB 级字符串参与每次流式重渲染
+  const sentImageMap = new Map();  // 'askimg-N' -> dataUrl
+  let sentImgSeq = 0;
+  const ASK_IMG_PLACEHOLDER = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
   // 设置面板 AI DOM
   const setAiProvider = document.getElementById('set-ai-provider');
   const setAiKey = document.getElementById('set-ai-key');
@@ -127,6 +133,7 @@
   const setAiExplain = document.getElementById('set-ai-explain');
   const setAiAsk = document.getElementById('set-ai-ask');
   const setAiIsolate = document.getElementById('set-ai-isolate');
+  const setAiMm = document.getElementById('set-ai-multimodal');
   const aiSettingsStatus = document.getElementById('ai-settings-status');
   const btnAiTest = document.getElementById('btn-ai-test');
   const btnSettingsSaveAi = document.getElementById('btn-settings-save-ai');
@@ -169,6 +176,11 @@
           throwOnError: false,
         });
       } catch (e) { /* 公式渲染失败不影响正文 */ }
+      // 4. 问答区已发送图片：占位图换回真实 dataUrl（见 sentImageMap）
+      el.querySelectorAll('img[alt^="askimg-"]').forEach(im => {
+        const real = sentImageMap.get(im.alt);
+        if (real) im.src = real;
+      });
     } catch (e) {
       // 渲染失败回退纯文本
       el.textContent = text;
@@ -393,9 +405,19 @@
     // 追加用户问题（初始总结消息也算历史第一条）
     askHistory.push({ role: 'user', content: q });
     askCurrentAnswer = '';
-    aiAskContent.__raw = (aiAskContent.__raw || '') + (isInitial
+    let display = isInitial
       ? '\n\n**AI 总结**: '
-      : `\n\n**你**: ${q}\n\n**AI**: `);
+      : `\n\n**你**: ${q}\n\n**AI**: `;
+    if (!isInitial && images && images.length) {
+      // 随问题发送的图片渲染进问答区（占位图 + alt 标记，渲染后换真实 dataUrl）
+      const imgMd = images.map(img => {
+        const key = 'askimg-' + (++sentImgSeq);
+        sentImageMap.set(key, img.dataUrl);
+        return `![${key}](${ASK_IMG_PLACEHOLDER})`;
+      }).join(' ');
+      display = `\n\n**你**: ${q}\n\n${imgMd}\n\n**AI**: `;
+    }
+    aiAskContent.__raw = (aiAskContent.__raw || '') + display;
     renderMarkdownTo(aiAskContent, aiAskContent.__raw);
     aiAskBox.value = '';
     aiAskStatus.textContent = '';
@@ -458,6 +480,14 @@
     else { aiExplain.classList.add('hidden'); cancelExplain(); }
     if (ai.showAsk) aiAsk.classList.remove('hidden');
     else { aiAsk.classList.add('hidden'); cancelAsk(); }
+    // 多模态开关关闭/模型不支持 → 隐藏选图按钮并退出选图模式
+    updateImageBtnVisibility();
+    if (!isCurrentModelMultimodal() && imageSelectMode) exitImageSelectMode();
+  }
+
+  // 选图按钮仅当前模型可用多模态时显示
+  function updateImageBtnVisibility() {
+    aiAskImage.classList.toggle('hidden', !isCurrentModelMultimodal());
   }
 
   // 回填 AI 设置表单
@@ -469,17 +499,12 @@
     setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
     setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
     setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
+    setAiMm.value = ai.multimodalEnabled === false ? 'off' : 'on';
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
-    // 总结页数范围回填（clamp 到 PDF 实际页数）
-    let start = ai.summaryStart || 1;
-    let end = ai.summaryEnd || 16;
-    const maxPage = (typeof PdfViewer !== 'undefined' && PdfViewer.pageCount) || 0;
-    if (maxPage > 0) {
-      if (start > maxPage) start = maxPage;
-      if (end > maxPage) end = maxPage;
-    }
-    aiSummaryStart.value = start;
-    aiSummaryEnd.value = end;
+    // 总结页数范围回填（clamp 到 PDF 实际页数/多模态上限）
+    const rc = clampSummaryRange(ai.summaryStart || 1, ai.summaryEnd || 16, false);
+    aiSummaryStart.value = rc.start;
+    aiSummaryEnd.value = rc.end;
     // 模型下拉：有已保存模型则选中，否则空提示
     if (ai.model) {
       if (![...setAiModel.options].some(o => o.value === ai.model)) {
@@ -552,6 +577,7 @@
       const mmCount = res.models.filter(m => m.multimodal).length;
       aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态。部分模型可能被误标为支持多模态，请注意甄别`;
       aiSettingsStatus.className = 'ok';
+      updateImageBtnVisibility();  // multimodalMap 更新后刷新选图按钮
     } else {
       setAiModel.innerHTML = '<option value="">拉取失败</option>';
       setAiModel.disabled = true;
@@ -685,6 +711,10 @@
     const start = Math.max(1, ai.summaryStart || 1);
     const end = Math.max(start, Math.min(ai.summaryEnd || 16, PdfViewer.pageCount));
 
+    // 新文档: 页数输入框锁定实际页数; 清空已发送图片缓存
+    clampSummaryInputsToDoc();
+    sentImageMap.clear();
+
     // 重置问答历史（新文档新会话）
     askHistory = [];
     askCurrentAnswer = '';
@@ -692,7 +722,8 @@
     aiAskStatus.textContent = '';
 
     // 多模态模型：渲染页范围为网格图上传总结（不注入全文文本）
-    const isMultimodal = !!(ai.model && (ai.multimodalMap || {})[ai.model]);
+    // 多模态总开关关闭时走文本提取路径
+    const isMultimodal = ai.multimodalEnabled !== false && !!(ai.model && (ai.multimodalMap || {})[ai.model]);
     if (isMultimodal && ai.apiKey && ai.model && ai.showAsk) {
       aiAsk.classList.remove('hidden');
       // 图片体积大：限制单次总结最多 16 页（4 页/张 × 4 张），超出提示缩小范围
@@ -766,8 +797,48 @@
 
   function isCurrentModelMultimodal() {
     const ai = currentConfig.ai || {};
+    if (ai.multimodalEnabled === false) return false;  // 多模态总开关关闭
     if (!ai.model) return false;
     return !!(ai.multimodalMap || {})[ai.model];
+  }
+
+  // 页数范围 clamp：锚定 PDF 实际页数（超出调到最后一页）；多模态模型限 16 页
+  function clampSummaryRange(start, end, warn = true) {
+    const maxPage = PdfViewer.pageCount || 0;
+    if (start < 1) start = 1;
+    if (maxPage > 0) {
+      if (start > maxPage) start = maxPage;
+      if (end > maxPage) end = maxPage;
+    }
+    if (end < start) end = start;
+    // 多模态总结单次最多 16 页（图片体积限制），超出自动收窄并警告
+    if (isCurrentModelMultimodal() && end - start + 1 > 16) {
+      end = maxPage > 0 ? Math.min(start + 15, maxPage) : start + 15;
+      if (warn) {
+        aiAskStatus.textContent = '⚠️ 多模态总结单次最多 16 页，已自动调整为起始页起 16 页';
+        clearTimeout(clampSummaryRange._t);
+        clampSummaryRange._t = setTimeout(() => {
+          if (aiAskStatus.textContent.startsWith('⚠️ 多模态总结')) aiAskStatus.textContent = '';
+        }, 5000);
+      }
+    }
+    return { start, end };
+  }
+
+  // PDF 打开后：页数输入框锁定实际页数（max 属性 + 显示值 clamp + 持久化）
+  function clampSummaryInputsToDoc() {
+    const maxPage = PdfViewer.pageCount || 0;
+    if (!maxPage) return;
+    aiSummaryStart.max = maxPage;
+    aiSummaryEnd.max = maxPage;
+    const start = parseInt(aiSummaryStart.value) || 1;
+    const end = parseInt(aiSummaryEnd.value) || 16;
+    const c = clampSummaryRange(start, end, false);
+    if (c.start !== start || c.end !== end) {
+      aiSummaryStart.value = c.start;
+      aiSummaryEnd.value = c.end;
+      saveSummaryRange();
+    }
   }
 
   async function enterImageSelectMode() {
@@ -784,7 +855,7 @@
     // 顶部提示条（含退出按钮）
     selectTipEl = document.createElement('div');
     selectTipEl.id = 'image-select-tip';
-    selectTipEl.innerHTML = '<span>🖼 点击蓝色区域选择位图，或直接拖拽框选任意区域（可多选）</span><button id="image-select-done">完成</button>';
+    selectTipEl.innerHTML = '<span>🖼 点击蓝色区域选择位图，或直接拖拽框选任意区域（可多选）。部分模型标称的多模态并不能真正支持，多数模型必须填入提示词才能上传图片</span><button id="image-select-done">完成</button>';
     document.body.appendChild(selectTipEl);
     document.getElementById('image-select-done').addEventListener('click', exitImageSelectMode);
 
@@ -1050,6 +1121,7 @@
         showExplain: setAiExplain.value === 'on',
         showAsk: setAiAsk.value === 'on',
         isolateContext: setAiIsolate.value !== 'off',
+        multimodalEnabled: setAiMm.value === 'on',
       },
     };
     await window.deepshui.saveConfig(cfg);
@@ -1057,18 +1129,13 @@
     applyAiVisibility();
   }
 
-  // 保存总结页数范围（提问框旁输入）
+  // 保存总结页数范围（提问框旁输入，clamp 到 PDF 实际页数/多模态上限）
   async function saveSummaryRange() {
     let start = parseInt(aiSummaryStart.value) || 1;
     let end = parseInt(aiSummaryEnd.value) || 16;
-    if (start < 1) start = 1;
-    // 超出 PDF 实际页数时 clamp（仅在已打开 PDF 时）
-    const maxPage = PdfViewer.pageCount || 0;
-    if (maxPage > 0) {
-      if (start > maxPage) start = maxPage;
-      if (end > maxPage) end = maxPage;
-    }
-    if (end < start) end = start;
+    const c = clampSummaryRange(start, end);
+    start = c.start;
+    end = c.end;
     // 回写 clamp 后的值，让用户看到生效范围
     aiSummaryStart.value = start;
     aiSummaryEnd.value = end;
@@ -1102,6 +1169,7 @@
         showExplain: setAiExplain.value === 'on',
         showAsk: setAiAsk.value === 'on',
         isolateContext: setAiIsolate.value !== 'off',
+        multimodalEnabled: setAiMm.value === 'on',
       },
     };
     await window.deepshui.saveConfig(cfg);
@@ -1123,7 +1191,8 @@
       setAiDeepThink.value !== (ai.deepThink || 'off') ||
       (setAiExplain.value === 'on') !== (ai.showExplain !== false) ||
       (setAiAsk.value === 'on') !== (ai.showAsk !== false) ||
-      (setAiIsolate.value !== 'off') !== (ai.isolateContext !== false);
+      (setAiIsolate.value !== 'off') !== (ai.isolateContext !== false) ||
+      (setAiMm.value === 'on') !== (ai.multimodalEnabled !== false);
     // 翻译引擎表单（手动保存）
     const engineChanged =
       setEngine.value !== (currentConfig.engine || 'youdao') ||
@@ -1207,8 +1276,8 @@
     aiSettingsStatus.className = 'ok';
   });
 
-  // AI 表单改动即自动保存（深度思考/显示开关/模型/Key/提供商）
-  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk, setAiIsolate].forEach(el => {
+  // AI 表单改动即自动保存（深度思考/显示开关/多模态开关/模型/Key/提供商）
+  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk, setAiIsolate, setAiMm].forEach(el => {
     el.addEventListener('change', autoSaveAi);
   });
   setAiModel.addEventListener('change', autoSaveAi);
@@ -1274,6 +1343,7 @@
     cancelAsk();
     askHistory = [];
     askCurrentAnswer = '';
+    sentImageMap.clear();
     clearAiContent(aiAskContent);
     aiAskStatus.textContent = '';
     aiAskStatus.className = 'ai-status';

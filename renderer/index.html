@@ -114,7 +114,7 @@
             <textarea id="ai-ask-box" rows="1" placeholder="向 AI 提问...（Enter 发送，Shift+Enter 换行）"></textarea>
             <div class="ai-ask-buttons">
               <div class="ai-ask-left">
-                <button id="ai-ask-image" title="选择 PDF 中的图片，随问题一起发送">🖼 选图</button>
+                <button id="ai-ask-image" title="选择 PDF 中的图片，随问题一起发送">选图</button>
                 <button id="ai-ask-clear" title="清空显示内容（上下文保留）">清屏</button>
                 <button id="ai-ask-reset" title="重置对话：清空历史并重新喂入全文让 AI 总结">重置对话</button>
               </div>
@@ -204,6 +204,13 @@
               </select>
               <button id="btn-ai-refresh" title="拉取模型列表">🔄</button>
             </div>
+          </div>
+          <div class="form-row">
+            <label>多模态功能</label>
+            <select id="set-ai-multimodal" title="关闭后不允许上传图片，总结改为提取全文文本">
+              <option value="on" selected>开启</option>
+              <option value="off">关闭</option>
+            </select>
           </div>
           <div class="form-row">
             <label>深度思考</label>

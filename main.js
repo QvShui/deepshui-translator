@@ -27,6 +27,7 @@ const DEFAULT_CONFIG = () => ({
     showExplain: false,
     showAsk: false,
     isolateContext: true,  // 隔离解释与问答上下文（默认开启）
+    multimodalEnabled: true,  // 多模态总开关（关闭后不允许上传图片，总结走文本提取）
     summaryStart: 1,   // AI 总结起始页（默认 1）
     summaryEnd: 16,    // AI 总结结束页（默认 16）
   },
