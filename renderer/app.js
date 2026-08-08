@@ -542,13 +542,13 @@
     btnAiRefresh.disabled = true;
     aiSettingsStatus.textContent = '拉取模型列表...';
     aiSettingsStatus.className = '';
-    // 多模态检测进度
-    const progressEl = document.getElementById('fulltext-progress');
-    const progressBar = document.getElementById('fulltext-progress-bar');
-    const progressText = document.getElementById('fulltext-progress-text');
+    // 拉取/探测进度（设置面板内独立进度条）
+    const progressEl = document.getElementById('ai-models-progress');
+    const progressBar = document.getElementById('ai-models-progress-bar');
+    const progressText = document.getElementById('ai-models-progress-text');
     progressEl.classList.remove('hidden');
     progressBar.style.width = '0%';
-    progressText.textContent = '正在验证模型可用性 0%';
+    progressText.textContent = '正在拉取模型列表...';
     const res = await window.deepshui.aiModels(setAiProvider.value, key);
     btnAiRefresh.disabled = false;
     progressEl.classList.add('hidden');
@@ -1292,10 +1292,10 @@
     updateAiKeyPlaceholder(setAiProvider.value);
   });
 
-  // 模型拉取进度（两阶段: 可用性探测 → 多模态探测）
+  // 模型拉取进度（两阶段: 可用性探测 → 多模态探测，设置面板内进度条）
   window.deepshui.onAiModelsProgress(({ done, total, phase }) => {
-    const bar = document.getElementById('fulltext-progress-bar');
-    const text = document.getElementById('fulltext-progress-text');
+    const bar = document.getElementById('ai-models-progress-bar');
+    const text = document.getElementById('ai-models-progress-text');
     if (!bar || !text) return;
     const pct = Math.round(done / total * 100);
     bar.style.width = pct + '%';

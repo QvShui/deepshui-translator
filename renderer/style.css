@@ -789,6 +789,31 @@ html, body {
   white-space: nowrap;
 }
 
+/* 模型拉取进度条（设置面板内，独立于全文提取进度条） */
+#ai-models-progress {
+  margin: 4px 0 10px;
+  padding: 6px 10px;
+  background: #f0f7ff;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ai-models-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-accent);
+  transition: width 0.15s;
+  flex-shrink: 0;
+}
+
+#ai-models-progress-text {
+  white-space: nowrap;
+}
+
 /* ── 设置面板 tabs ───────────────────────── */
 .settings-tabs {
   display: flex;

@@ -1,6 +1,6 @@
 {
   "name": "deepshui-translator",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "deepshui-translator - PDF 划词翻译工具",
   "main": "main.js",
   "scripts": {

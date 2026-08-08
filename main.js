@@ -694,7 +694,11 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     const mmResults = await probeModelsBatch(providerCfg, key, chatOkIds, true, (done, total) => {
       if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'multimodal', done, total });
     });
-    return { ok: true, models: mmResults.map(r => ({ id: r.id, multimodal: r.ok, retiring: retiringSet.has(r.id) })) };
+    // 按字典序返回（不区分大小写）
+    const models = mmResults
+      .map(r => ({ id: r.id, multimodal: r.ok, retiring: retiringSet.has(r.id) }))
+      .sort((a, b) => a.id.localeCompare(b.id, 'en', { sensitivity: 'base' }));
+    return { ok: true, models };
   } catch (e) {
     return { ok: false, error: e.message };
   }
