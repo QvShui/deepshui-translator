@@ -662,9 +662,10 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     const list = await fetchAiModels(providerCfg, key);
     if (!list.ok) return list;
 
-    // 过滤停服模型（豆包返回 status=Shutdown/Retiring）
-    let candidates = list.models.filter(m => m.status !== 'Shutdown' && m.status !== 'Retiring');
-    if (candidates.length === 0) candidates = list.models.filter(m => m.status !== 'Shutdown');
+    // 过滤停服模型（Shutdown 实测全灭直接排除；Retiring 实测可能仍可用，保留并交给探测兜底）
+    let candidates = list.models.filter(m => m.status !== 'Shutdown');
+    // 记录 Retiring 模型，渲染层标注 ⚠️Retiring
+    const retiringSet = new Set(candidates.filter(m => m.status === 'Retiring').map(m => m.id));
     // 过滤非对话模型（豆包/千问的列表会混入视频/图像/3D/向量/语音模型）：
     // 1) output_modalities 存在且不含 text → 非对话
     // 2) 名称含已知非对话类型 → 非对话
@@ -690,7 +691,7 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     const mmResults = await probeModelsBatch(providerCfg, key, chatOkIds, true, (done, total) => {
       if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'multimodal', done, total });
     });
-    return { ok: true, models: mmResults.map(r => ({ id: r.id, multimodal: r.ok })) };
+    return { ok: true, models: mmResults.map(r => ({ id: r.id, multimodal: r.ok, retiring: retiringSet.has(r.id) })) };
   } catch (e) {
     return { ok: false, error: e.message };
   }

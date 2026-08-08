@@ -533,8 +533,11 @@
       for (const m of res.models) {
         const opt = document.createElement('option');
         opt.value = m.id;
-        // 支持的模型标注 (多模态✅)，value 保持纯模型名
-        opt.textContent = m.multimodal ? `${m.id} (多模态✅)` : m.id;
+        // Retiring 模型标注警告（官方下线中但可能仍可用）；多模态标注 ✅，value 保持纯模型名
+        let label = m.id;
+        if (m.retiring) label += ' ⚠️Retiring';
+        if (m.multimodal) label += ' (多模态✅)';
+        opt.textContent = label;
         setAiModel.appendChild(opt);
         if (m.multimodal) multimodalMap[m.id] = true;
       }
