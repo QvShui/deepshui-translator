@@ -27,6 +27,8 @@ const DEFAULT_CONFIG = () => ({
     showExplain: false,
     showAsk: false,
     isolateContext: true,  // 隔离解释与问答上下文（默认开启）
+    summaryStart: 1,   // AI 总结起始页（默认 1）
+    summaryEnd: 30,    // AI 总结结束页（默认 30）
   },
 });
 

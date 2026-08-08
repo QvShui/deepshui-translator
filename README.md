@@ -2,7 +2,7 @@
 
 **PDF 划词翻译 + AI 阅读助手** —— 基于 Electron + PDF.js + DeepSeek。
 
-> 轻量、跨平台、开源（MIT）。翻译引擎由用户自备，AI 引擎基于 DeepSeek。
+> 轻量、跨平台、开源（MIT）。翻译引擎由用户自备，AI 引擎支持 DeepSeek / 千问 / 豆包 / Kimi。
 
 ## ✨ 功能
 
@@ -14,9 +14,12 @@
 - 🚫 目标语言可选「不翻译」（纯 AI 阅读模式）
 - 📋 一键复制译文
 
-### AI 引擎（DeepSeek）
+### AI 引擎（DeepSeek / 千问 / 豆包 / Kimi）
 - 🤖 **AI 解释**：划词自动解释段落（核心意思 / 关键术语 / 背景知识）
 - 💬 **AI 问答**：多轮对话，可基于全文（打开 PDF 自动总结，提问自动携带全文）
+- 🔢 **总结页数限制**：默认只总结 1-30 页，可在提问框下方修改范围（避免长文档超 token）
+- 🖼️ **PDF 选图上传**：点击「选图」后，PDF 中的图片区域会高亮，点击即可截取图片随问题一起发送（多模态模型可解释文献图表）
+- 🖼️ **多模态总结**：支持多模态的模型（千问 VL / Kimi / 豆包等）打开 PDF 时直接渲染页面图片总结，能理解图表与公式
 - 🔄 **重置对话**：一键清空历史并重新喂入全文总结
 - 🧠 **深度思考**：关闭 / low / high / max 四档推理强度
 - 📝 **Markdown + LaTeX 渲染**：标题、列表、粗体、数学公式（KaTeX）
@@ -64,8 +67,8 @@ npm start
 从 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases) 下载：
 
 ```bash
-wget https://github.com/QvShui/deepshui-translator/releases/download/v2.0.3/deepshui-translator_2.0.3_Debian-Trixie_amd64.deb
-sudo dpkg -i deepshui-translator_2.0.3_Debian-Trixie_amd64.deb
+wget https://github.com/QvShui/deepshui-translator/releases/download/v2.0.4/deepshui-translator_2.0.4_Debian-Trixie_amd64.deb
+sudo dpkg -i deepshui-translator_2.0.4_Debian-Trixie_amd64.deb
 ```
 
 > Linux 安装包在 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases) 下载。macOS/Windows 用户请自行从源码构建（见下）。

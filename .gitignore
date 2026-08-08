@@ -30,3 +30,5 @@ test_api_key.txt
 
 # API keys (test files)
 apis.csv
+# 参考文件（DeepSeek 网页版快照，不提交）
+DeepSeek - *.html

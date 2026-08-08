@@ -106,9 +106,17 @@
   const aiAskSend = document.getElementById('ai-ask-send');
   const aiAskClear = document.getElementById('ai-ask-clear');
   const aiAskReset = document.getElementById('ai-ask-reset');
+  const aiAskImage = document.getElementById('ai-ask-image');
+  const aiAskImages = document.getElementById('ai-ask-images');
+  const aiSummaryStart = document.getElementById('ai-summary-start');
+  const aiSummaryEnd = document.getElementById('ai-summary-end');
   const fulltextProgress = document.getElementById('fulltext-progress');
   const fulltextProgressBar = document.getElementById('fulltext-progress-bar');
   const fulltextProgressText = document.getElementById('fulltext-progress-text');
+
+  // 提问附件（PDF 中选中的图片）
+  let askImages = [];   // [{ page, bbox, dataUrl, label }]
+  let imageSelectMode = false;
 
   // 设置面板 AI DOM
   const setAiProvider = document.getElementById('set-ai-provider');
@@ -363,7 +371,7 @@
     }
   }
 
-  async function sendAsk(predefinedText, isInitial) {
+  async function sendAsk(predefinedText, isInitial, images) {
     const q = (predefinedText !== undefined ? predefinedText : aiAskBox.value.trim());
     if (!q || aiAskRunning) return;
     aiAskRunning = true;
@@ -387,7 +395,19 @@
       messages.push({ role: 'system', content: '以下是用户打开的 PDF 全文，回答问题时请基于这篇文章：\n\n' + fullText });
     }
     messages.push({ role: 'system', content: '你是一个乐于助人的 AI 助手，请用中文回答用户的问题。' });
-    messages.push(...askHistory);
+    const historyCopy = [...askHistory];
+    // 带图提问：最后一条 user 消息换成 content 数组（OpenAI 兼容多模态格式）
+    if (images && images.length) {
+      const last = historyCopy[historyCopy.length - 1];
+      historyCopy[historyCopy.length - 1] = {
+        role: 'user',
+        content: [
+          { type: 'text', text: last.content },
+          ...images.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl } })),
+        ],
+      };
+    }
+    messages.push(...historyCopy);
 
     await window.deepshui.aiChat('ask', messages, 'ask');
   }
@@ -423,6 +443,11 @@
     setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
     setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
+    // 总结页数范围回填
+    const start = ai.summaryStart || 1;
+    const end = ai.summaryEnd || 30;
+    aiSummaryStart.value = start;
+    aiSummaryEnd.value = end;
     // 模型下拉：有已保存模型则选中，否则空提示
     if (ai.model) {
       if (![...setAiModel.options].some(o => o.value === ai.model)) {
@@ -472,14 +497,23 @@
     progressEl.classList.add('hidden');
     if (res.ok && res.models && res.models.length) {
       setAiModel.innerHTML = '';
+      const multimodalMap = {};
       for (const m of res.models) {
         const opt = document.createElement('option');
         opt.value = m.id;
         // 支持的模型标注 (多模态✅)，value 保持纯模型名
         opt.textContent = m.multimodal ? `${m.id} (多模态✅)` : m.id;
         setAiModel.appendChild(opt);
+        if (m.multimodal) multimodalMap[m.id] = true;
       }
       setAiModel.disabled = false;
+      // 保存多模态表到配置（选图按钮/多模态总结判断用）
+      try {
+        const cfg = await window.deepshui.getConfig();
+        cfg.ai = { ...(cfg.ai || {}), multimodalMap };
+        await window.deepshui.saveConfig(cfg);
+        currentConfig = cfg;
+      } catch (e) { /* 保存失败不影响模型列表 */ }
       const mmCount = res.models.filter(m => m.multimodal).length;
       aiSettingsStatus.textContent = `✅ 发现 ${res.models.length} 个模型，其中 ${mmCount} 个支持多模态`;
       aiSettingsStatus.className = 'ok';
@@ -612,7 +646,56 @@
   // PDF 打开后：提取全文（带进度）→ 重置问答历史 → 自动总结（若 AI 可用）
   async function handlePdfOpened() {
     const myTurn = ++pdfOpenCounter;
-    // 显示提取进度
+    const ai = currentConfig.ai || {};
+    const start = Math.max(1, ai.summaryStart || 1);
+    const end = Math.max(start, Math.min(ai.summaryEnd || 30, PdfViewer.pageCount));
+
+    // 重置问答历史（新文档新会话）
+    askHistory = [];
+    askCurrentAnswer = '';
+    clearAiContent(aiAskContent);
+    aiAskStatus.textContent = '';
+
+    // 多模态模型：渲染页范围为网格图上传总结（不注入全文文本）
+    const isMultimodal = !!(ai.model && (ai.multimodalMap || {})[ai.model]);
+    if (isMultimodal && ai.apiKey && ai.model && ai.showAsk) {
+      aiAsk.classList.remove('hidden');
+      // 图片体积大：限制单次总结最多 16 页（4 页/张 × 4 张），超出提示缩小范围
+      const MM_MAX_PAGES = 16;
+      if (end - start + 1 > MM_MAX_PAGES) {
+        clearAiContent(aiAskContent);
+        aiAskContent.textContent =
+          `⚠️ 多模态总结单次最多 ${MM_MAX_PAGES} 页（图片体积限制）。` +
+          `当前范围 ${start}-${end} 共 ${end - start + 1} 页，请在下方「总结页数」处缩小范围后点击「重置对话」。`;
+        return;
+      }
+      fulltextProgress.classList.remove('hidden');
+      fulltextProgressBar.style.width = '0%';
+      fulltextProgressText.textContent = '正在渲染页面 0%';
+      const pageNums = [];
+      for (let p = start; p <= end; p++) pageNums.push(p);
+      const grids = [];
+      const BATCH = 4; // 每 4 页拼一张网格图，控制图片数量
+      for (let i = 0; i < pageNums.length; i += BATCH) {
+        if (myTurn !== pdfOpenCounter) return;
+        const batch = pageNums.slice(i, i + BATCH);
+        fulltextProgressText.textContent =
+          `正在渲染页面 ${batch[0]}-${batch[batch.length - 1]} (${Math.min(i + BATCH, pageNums.length)}/${pageNums.length})`;
+        const grid = await PdfViewer.renderPagesToGrid(batch, 2, 1.0);
+        if (grid) grids.push({ dataUrl: grid, label: `第${batch[0]}-${batch[batch.length - 1]}页` });
+      }
+      fulltextProgress.classList.add('hidden');
+      if (myTurn !== pdfOpenCounter) return;
+      fullText = ''; // 图片已含全部内容，不注入文本（避免双重内容）
+      if (grids.length) {
+        sendAsk('请阅读并理解上面的文章页面，然后用中文总结这些页面的核心内容，之后我会继续向你提问。', true, grids);
+      } else {
+        aiAskContent.textContent = '⚠️ 页面渲染失败，无法进行多模态总结';
+      }
+      return;
+    }
+
+    // 文本模型：按页数范围提取全文
     fulltextProgress.classList.remove('hidden');
     fulltextProgressBar.style.width = '0%';
     fulltextProgressText.textContent = '正在提取全文 0%';
@@ -623,16 +706,10 @@
         const pct = Math.round(current / total * 100);
         fulltextProgressBar.style.width = pct + '%';
         fulltextProgressText.textContent = `正在提取全文 ${current}/${total} (${pct}%)`;
-      });
+      }, { start, end });
       if (myTurn !== pdfOpenCounter) return; // 已打开新 PDF，丢弃
       fullText = text;
       fulltextProgress.classList.add('hidden');
-
-      // 重置问答历史（新文档新会话）
-      askHistory = [];
-      askCurrentAnswer = '';
-      clearAiContent(aiAskContent);
-      aiAskStatus.textContent = '';
 
       if (!fullText.trim()) {
         clearAiContent(aiAskContent);
@@ -641,12 +718,106 @@
       }
 
       // 自动总结（AI 已配置 + 问答显示开启）——全文只放 system，避免双重注入
-      const ai = currentConfig.ai || {};
       if (ai.apiKey && ai.model && ai.showAsk) {
         aiAsk.classList.remove('hidden');
         sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
       }
     }, 100);
+  }
+
+  // ── 选图模式（点击 PDF 中的图片上传）────────
+  // 进入/退出选图模式：在 PDF 页面上显示蓝色热区，点击即截取该区域
+  let selectTipEl = null;
+
+  function isCurrentModelMultimodal() {
+    const ai = currentConfig.ai || {};
+    if (!ai.model) return false;
+    return !!(ai.multimodalMap || {})[ai.model];
+  }
+
+  async function enterImageSelectMode() {
+    if (imageSelectMode) return;
+    if (!PdfViewer.pageCount) {
+      alert('请先打开 PDF 文件');
+      return;
+    }
+    if (!isCurrentModelMultimodal()) {
+      alert('当前 AI 模型不支持多模态，无法发送图片。\n请在 ⚙️ 设置 → AI 引擎 选择标注「(多模态✅)」的模型。');
+      return;
+    }
+    imageSelectMode = true;
+    // 顶部提示条（含退出按钮）
+    selectTipEl = document.createElement('div');
+    selectTipEl.id = 'image-select-tip';
+    selectTipEl.innerHTML = '<span>🖼 点击 PDF 中的蓝色区域选择图片（可多选）</span><button id="image-select-done">完成</button>';
+    document.body.appendChild(selectTipEl);
+    document.getElementById('image-select-done').addEventListener('click', exitImageSelectMode);
+
+    PdfViewer.enterImageSelectMode(async (pageNum, bbox) => {
+      aiAskStatus.textContent = '正在截取图片...';
+      aiAskStatus.className = 'ai-status';
+      try {
+        const dataUrl = await PdfViewer.renderRegionToPng(pageNum, bbox, 2);
+        if (dataUrl) {
+          askImages.push({ page: pageNum, dataUrl, label: `第 ${pageNum} 页图片` });
+          renderAskImages();
+        }
+      } catch (e) {
+        console.error('截取图片失败:', e);
+      }
+      aiAskStatus.textContent = '';
+    });
+  }
+
+  function exitImageSelectMode() {
+    if (!imageSelectMode) return;
+    imageSelectMode = false;
+    PdfViewer.exitImageSelectMode();
+    if (selectTipEl) {
+      selectTipEl.remove();
+      selectTipEl = null;
+    }
+  }
+
+  // 渲染附件缩略图（仿 DeepSeek：输入框上方，可删除）
+  function renderAskImages() {
+    aiAskImages.innerHTML = '';
+    if (askImages.length === 0) {
+      aiAskImages.classList.add('hidden');
+      return;
+    }
+    aiAskImages.classList.remove('hidden');
+    askImages.forEach((img, idx) => {
+      const item = document.createElement('div');
+      item.className = 'ai-ask-image-item';
+      const im = document.createElement('img');
+      im.src = img.dataUrl;
+      im.alt = img.label;
+      const tag = document.createElement('div');
+      tag.className = 'page-tag';
+      tag.textContent = `p.${img.page}`;
+      const rm = document.createElement('button');
+      rm.className = 'remove';
+      rm.textContent = '✕';
+      rm.title = '移除图片';
+      rm.addEventListener('click', () => {
+        askImages.splice(idx, 1);
+        renderAskImages();
+      });
+      item.appendChild(im);
+      item.appendChild(tag);
+      item.appendChild(rm);
+      aiAskImages.appendChild(item);
+    });
+  }
+
+  // 发送时携带附件图片，发送后清空附件
+  function takeAskImages() {
+    if (askImages.length === 0) return null;
+    const imgs = askImages.map(img => ({ dataUrl: img.dataUrl }));
+    askImages = [];
+    renderAskImages();
+    return imgs;
   }
 
   // ── 划词翻译 + AI 解释联动 ───────────────
@@ -851,6 +1022,19 @@
     applyAiVisibility();
   }
 
+  // 保存总结页数范围（提问框旁输入）
+  async function saveSummaryRange() {
+    let start = parseInt(aiSummaryStart.value) || 1;
+    let end = parseInt(aiSummaryEnd.value) || 30;
+    if (start < 1) start = 1;
+    if (end < start) end = start;
+    const ai = { ...(currentConfig.ai || {}) };
+    if (ai.summaryStart === start && ai.summaryEnd === end) return;
+    const cfg = { ...currentConfig, ai: { ...ai, summaryStart: start, summaryEnd: end } };
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+  }
+
   // 保存全部设置（翻译引擎 + AI，用于「保存并退出」）
   async function fullSave() {
     const provider = setAiProvider.value;
@@ -1006,14 +1190,24 @@
   });
 
   // AI 问答发送 / 清屏
-  aiAskSend.addEventListener('click', () => sendAsk());
+  aiAskSend.addEventListener('click', () => sendAsk(undefined, false, takeAskImages()));
   aiAskBox.addEventListener('keydown', (e) => {
     // Enter 发送，Shift+Enter 换行
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendAsk();
+      sendAsk(undefined, false, takeAskImages());
     }
   });
+
+  // 选图按钮：进入/退出选图模式
+  aiAskImage.addEventListener('click', () => {
+    if (imageSelectMode) exitImageSelectMode();
+    else enterImageSelectMode();
+  });
+
+  // 总结页数范围：失焦保存
+  aiSummaryStart.addEventListener('change', saveSummaryRange);
+  aiSummaryEnd.addEventListener('change', saveSummaryRange);
 
   // 输入框随内容自动增高（上限 120px）
   aiAskBox.addEventListener('input', () => {
@@ -1043,7 +1237,36 @@
     aiAskSend.disabled = false;
 
     const ai = currentConfig.ai || {};
-    if (fullText && ai.apiKey && ai.model) {
+    if (ai.apiKey && ai.model && ai.showAsk && isCurrentModelMultimodal() && PdfViewer.pageCount) {
+      // 多模态模型：重新渲染页范围图片并总结
+      const MM_MAX_PAGES = 16;
+      const start = Math.max(1, ai.summaryStart || 1);
+      const end = Math.max(start, Math.min(ai.summaryEnd || 30, PdfViewer.pageCount));
+      if (end - start + 1 > MM_MAX_PAGES) {
+        clearAiContent(aiAskContent);
+        aiAskContent.textContent =
+          `⚠️ 多模态总结单次最多 ${MM_MAX_PAGES} 页（图片体积限制）。` +
+          `当前范围 ${start}-${end} 共 ${end - start + 1} 页，请在下方「总结页数」处缩小范围后重试。`;
+        return;
+      }
+      clearAiContent(aiAskContent);
+      aiAskContent.textContent = '已重置对话，正在渲染页面...';
+      const pageNums = [];
+      for (let p = start; p <= end; p++) pageNums.push(p);
+      const grids = [];
+      const BATCH = 4;
+      for (let i = 0; i < pageNums.length; i += BATCH) {
+        const batch = pageNums.slice(i, i + BATCH);
+        aiAskContent.textContent = `已重置对话，正在渲染页面 ${batch[0]}-${batch[batch.length - 1]}...`;
+        const grid = await PdfViewer.renderPagesToGrid(batch, 2, 1.0);
+        if (grid) grids.push({ dataUrl: grid });
+      }
+      if (grids.length) {
+        sendAsk('请阅读并理解上面的文章页面，然后用中文总结这些页面的核心内容，之后我会继续向你提问。', true, grids);
+      } else {
+        aiAskContent.textContent = '⚠️ 页面渲染失败，请重试';
+      }
+    } else if (fullText && ai.apiKey && ai.model) {
       clearAiContent(aiAskContent);
       aiAskContent.textContent = '已重置对话，正在重新喂入全文...';
       // 重新喂全文：全文通过 system 注入（sendAsk 自动带上），只需发总结指令
@@ -1090,10 +1313,16 @@
     openPdfFile(filePath);
   });
 
-  // Esc 关闭设置
+  // Esc 关闭设置 / 退出选图模式
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !settingsOverlay.classList.contains('hidden')) {
-      closeSettings();
+    if (e.key === 'Escape') {
+      if (imageSelectMode) {
+        exitImageSelectMode();
+        return;
+      }
+      if (!settingsOverlay.classList.contains('hidden')) {
+        closeSettings();
+      }
     }
   });
 
