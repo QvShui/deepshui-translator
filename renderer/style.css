@@ -248,6 +248,7 @@ html, body {
   border-bottom: 1px solid var(--border);
   font-weight: 600;
   gap: 8px;
+  flex-wrap: wrap;  /* 空间不足时控件换行，避免溢出（v2.3.3） */
 }
 
 .sidebar-controls {
@@ -262,6 +263,12 @@ html, body {
   font-size: 12px;
   background: #fff;
   max-width: 84px;
+}
+
+/* 顶部 AI 模型快速切换下拉（v2.3.3）：模型名较长，放宽宽度 */
+#ai-model-switch {
+  max-width: 130px;
+  font-weight: 400;
 }
 
 #sidebar-content {

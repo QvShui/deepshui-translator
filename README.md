@@ -73,6 +73,19 @@ sudo dpkg -i deepshui-translator_2.0.4_Debian-Trixie_amd64.deb
 
 > Linux 安装包在 [GitHub Releases](https://github.com/QvShui/deepshui-translator/releases) 下载。macOS/Windows 用户请自行从源码构建（见下）。
 
+## 🗑️ 卸载
+
+卸载时会**自动清除本机配置**（API Key 等）：
+
+| 平台 | 卸载方式 | 配置清理 |
+|---|---|---|
+| Linux (deb) | `sudo dpkg -r deepshui-translator` | ✅ 自动删除 `~/.config/deepshui-translator`（所有用户） |
+| Windows | 控制面板/设置 → 卸载 deepshui-translator | ✅ 自动删除 `%APPDATA%\deepshui-translator` |
+| macOS | 运行 dmg 内的「mac-uninstall.command」（或终端执行） | ✅ 删除应用 + `~/Library/Application Support/deepshui-translator` |
+| Linux (AppImage) | 直接删除 .AppImage 文件 | ⚠️ 无卸载器，需手动删除 `~/.config/deepshui-translator` |
+
+> macOS 无标准卸载机制（拖入废纸篓不会触发清理），请务必使用卸载脚本。
+
 ## 🛠️ 从源码构建
 
 | 平台 | 命令 | 产物 |

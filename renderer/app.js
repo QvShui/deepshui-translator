@@ -49,6 +49,7 @@
   const btnSettings = document.getElementById('btn-settings');
   const targetLang = document.getElementById('target-lang');
   const engineSelect = document.getElementById('engine-select');
+  const aiModelSwitch = document.getElementById('ai-model-switch');  // 顶部快速切换 AI 模型（v2.3.3）
 
   // 侧边栏
   const translatePlaceholder = document.getElementById('translate-placeholder');
@@ -128,6 +129,76 @@
   // 切换模型: 存当前会话 → 恢复目标会话（无则开新会话并自动总结）
   const sessionStore = new Map();
   let currentSessionKey = null;
+
+  // 本次运行中产生过 AI 问答的模型（顶部快速切换下拉的数据源，v2.3.3）
+  const usedAskModels = new Map();  // 'provider/model' -> { provider, model }
+  const PROVIDER_LABELS = { deepseek: 'DeepSeek', qwen: '千问', doubao: '豆包', kimi: 'Kimi' };
+
+  // 记录一个模型被用于 AI 问答，并重建顶部快速切换下拉
+  function trackUsedAskModel(provider, model) {
+    if (!provider || !model) return;
+    const key = `${provider}/${model}`;
+    if (!usedAskModels.has(key)) {
+      usedAskModels.set(key, { provider, model });
+      rebuildModelSwitch();
+    }
+  }
+
+  // 重建顶部快速切换下拉：用过的模型 + 当前模型（确保有对应 option 可选中）
+  function rebuildModelSwitch() {
+    const ai = currentConfig.ai || {};
+    const curKey = ai.model ? `${ai.provider || 'deepseek'}/${ai.model}` : '';
+    const items = new Map(usedAskModels);
+    if (curKey && !items.has(curKey)) {
+      items.set(curKey, { provider: ai.provider || 'deepseek', model: ai.model });
+    }
+    const list = [...items.values()]
+      .sort((a, b) => `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`, 'en', { sensitivity: 'base' }));
+    aiModelSwitch.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = 'AI 模型';
+    aiModelSwitch.appendChild(ph);
+    for (const it of list) {
+      const opt = document.createElement('option');
+      opt.value = `${it.provider}/${it.model}`;
+      opt.textContent = `${it.model}（${PROVIDER_LABELS[it.provider] || it.provider}）`;
+      aiModelSwitch.appendChild(opt);
+    }
+    aiModelSwitch.disabled = list.length === 0;
+    aiModelSwitch.value = curKey && [...aiModelSwitch.options].some(o => o.value === curKey) ? curKey : '';
+  }
+
+  // 顶部下拉快速切换模型：保存配置（含 modelByProvider）+ 走会话切换（恢复该模型历史/自动总结）
+  async function quickSwitchModel(provider, model) {
+    const prevProvider = (currentConfig.ai && currentConfig.ai.provider) || 'deepseek';
+    const prevModel = (currentConfig.ai && currentConfig.ai.model) || '';
+    const key = `${provider}/${model}`;
+    if (prevModel && `${prevProvider}/${prevModel}` === key) return;  // 已是当前模型
+    const modelByProvider = { ...(currentConfig.ai?.modelByProvider || {}) };
+    if (prevModel) modelByProvider[prevProvider] = prevModel;  // 旧模型归旧槽位
+    modelByProvider[provider] = model;                          // 新槽位记录
+    const cfg = {
+      ...currentConfig,
+      ai: { ...(currentConfig.ai || {}), provider, model, modelByProvider },
+    };
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+    maybeSwitchSession(cfg);  // 内部 switchSession：存当前会话 → 恢复目标会话
+    // 同步设置面板表单（即使面板隐藏）
+    setAiProvider.value = provider;
+    if (![...setAiModel.options].some(o => o.value === model)) {
+      const opt = document.createElement('option');
+      opt.value = model;
+      opt.textContent = model;
+      setAiModel.appendChild(opt);
+    }
+    setAiModel.value = model;
+    updateAiKeyPlaceholder(provider);
+    applyAiVisibility();
+    updateImageBtnVisibility();
+    rebuildModelSwitch();
+  }
 
   // 设置面板 AI DOM
   const setAiProvider = document.getElementById('set-ai-provider');
@@ -419,6 +490,8 @@
     aiAskRunning = true;
     aiAskSend.disabled = true;
     aiAskBox.disabled = true;
+    // 记录本次问答使用的模型（顶部快速切换下拉用，v2.3.3）
+    trackUsedAskModel((currentConfig.ai && currentConfig.ai.provider) || 'deepseek', (currentConfig.ai && currentConfig.ai.model) || '');
 
     // 追加用户问题（初始总结消息也算历史第一条）
     askHistory.push({ role: 'user', content: q });
@@ -580,6 +653,7 @@
       currentConfig = cfg;
     } catch (e) { /* 保存失败不影响模型列表 */ }
     updateImageBtnVisibility();  // multimodalMap 更新后刷新选图按钮
+    rebuildModelSwitch();        // 模型列表变化后同步顶部快速切换下拉（v2.3.3）
   }
 
   // 从磁盘缓存加载某提供商的模型（不联网）
@@ -737,6 +811,7 @@
     // AI 配置回填
     fillAiForm(cfg.ai || {});
     applyAiVisibility();
+    rebuildModelSwitch();  // 顶部快速切换下拉初始状态（v2.3.3）
     // 会话归属当前模型（按模型保存会话）
     currentSessionKey = (cfg.ai && cfg.ai.model) ? `${cfg.ai.provider || 'deepseek'}/${cfg.ai.model}` : null;
 
@@ -1287,6 +1362,7 @@
     currentConfig = cfg;
     maybeSwitchSession(cfg);
     applyAiVisibility();
+    rebuildModelSwitch();  // 顶部快速切换下拉同步当前模型（v2.3.3）
   }
 
   // 保存总结页数范围（提问框旁输入，clamp 到 PDF 实际页数/多模态上限）
@@ -1448,6 +1524,15 @@
   });
   setAiModel.addEventListener('change', autoSaveAi);
   setAiKey.addEventListener('change', autoSaveAi); // 失焦时保存
+
+  // 顶部快速切换 AI 模型（v2.3.3）：记录本次用过问答的模型，切换即恢复该模型会话
+  aiModelSwitch.addEventListener('change', () => {
+    const v = aiModelSwitch.value;
+    if (!v) return;
+    const idx = v.indexOf('/');
+    if (idx <= 0) return;
+    quickSwitchModel(v.slice(0, idx), v.slice(idx + 1));
+  });
 
   // 切换提供商：加载该商的 key 到输入框 + 优先用磁盘缓存填充模型（v2.3.1，不重复拉取）
   setAiProvider.addEventListener('change', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "deepshui-translator",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "deepshui-translator - PDF 划词翻译工具",
   "main": "main.js",
   "scripts": {
@@ -43,9 +43,17 @@
       "icon": "assets/icon.png",
       "category": "public.app-category.productivity"
     },
+    "dmg": {
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" },
+        { "x": 130, "y": 380, "type": "file", "path": "mac-uninstall.command" }
+      ]
+    },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": true
     },
     "deb": {
       "depends": [
@@ -56,7 +64,8 @@
         "libxtst6",
         "xdg-utils"
       ],
-      "afterInstall": "build/after-install.tpl"
+      "afterInstall": "build/after-install.tpl",
+      "afterRemove": "build/after-remove.tpl"
     }
   },
   "allowScripts": {
