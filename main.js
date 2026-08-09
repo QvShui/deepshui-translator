@@ -22,6 +22,7 @@ const DEFAULT_CONFIG = () => ({
   ai: {
     provider: 'deepseek',
     providerKeys: { deepseek: '', qwen: '', doubao: '', kimi: '' },
+    modelByProvider: { deepseek: '', qwen: '', doubao: '', kimi: '' },  // 每提供商记忆各自模型（v2.3.2）
     model: '',
     deepThink: 'off',   // off | low | high | max（默认关闭）
     showExplain: false,
@@ -62,6 +63,11 @@ function loadConfig() {
         if (!merged.providerKeys) merged.providerKeys = { ...def.ai.providerKeys };
         if (oldAi.apiKey && !merged.providerKeys.deepseek) {
           merged.providerKeys.deepseek = oldAi.apiKey;
+        }
+        // 兼容旧配置: 无 modelByProvider 时，把现有 model 归到当前 provider 槽位
+        if (!merged.modelByProvider) {
+          merged.modelByProvider = { ...def.ai.modelByProvider };
+          if (merged.model) merged.modelByProvider[merged.provider] = merged.model;
         }
         return merged;
       })(),

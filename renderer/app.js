@@ -528,15 +528,16 @@
     const rc = clampSummaryRange(ai.summaryStart || 1, ai.summaryEnd || 16, false);
     aiSummaryStart.value = rc.start;
     aiSummaryEnd.value = rc.end;
-    // 模型下拉：有已保存模型则选中，否则空提示
-    if (ai.model) {
-      if (![...setAiModel.options].some(o => o.value === ai.model)) {
+    // 模型下拉：优先该提供商记忆的模型（modelByProvider），避免跨提供商残留旧模型（v2.3.2）
+    const desired = (ai.modelByProvider || {})[ai.provider || 'deepseek'] || ai.model || '';
+    if (desired) {
+      if (![...setAiModel.options].some(o => o.value === desired)) {
         const opt = document.createElement('option');
-        opt.value = ai.model;
-        opt.textContent = ai.model;
+        opt.value = desired;
+        opt.textContent = desired;
         setAiModel.appendChild(opt);
       }
-      setAiModel.value = ai.model;
+      setAiModel.value = desired;
       setAiModel.disabled = false;
     } else {
       setAiModel.innerHTML = '<option value="">先输入 API Key 再点击刷新</option>';
@@ -582,26 +583,19 @@
   }
 
   // 从磁盘缓存加载某提供商的模型（不联网）
-  // 返回 { models, savedAt } 或 null（无缓存）；恢复之前的选中项，避免切换后丢选择
+  // 返回 { models, savedAt } 或 null（无缓存）
+  // 恢复选择：优先当前下拉选中项，其次该提供商记忆的模型（modelByProvider）；
+  // 不在缓存列表里就不选中——绝不把其他提供商的模型补进来（v2.3.2 修复跨提供商残留）
   async function loadCachedModels(provider) {
     const res = await window.deepshui.aiModelsCache(provider);
     if (!(res.ok && res.cached && res.models.length)) return null;
     const prev = setAiModel.value;
     await applyModelList(res.models);
-    if ([...setAiModel.options].some(o => o.value === prev)) {
-      setAiModel.value = prev;
-    } else if (prev) {
-      // 之前选的模型不在缓存里（如跨提供商残留），补一个选项保持选中
-      const opt = document.createElement('option');
-      opt.value = prev;
-      opt.textContent = prev;
-      setAiModel.appendChild(opt);
-      setAiModel.value = prev;
-    } else {
-      const ai = currentConfig.ai || {};
-      if (ai.model && [...setAiModel.options].some(o => o.value === ai.model)) {
-        setAiModel.value = ai.model;
-      }
+    // 用最新配置：切换提供商时 autoSaveAi 可能刚写入 modelByProvider
+    const ai = (await window.deepshui.getConfig()).ai || {};
+    const desired = prev || (ai.modelByProvider || {})[provider] || ai.model || '';
+    if (desired && [...setAiModel.options].some(o => o.value === desired)) {
+      setAiModel.value = desired;
     }
     return { models: res.models, savedAt: res.savedAt };
   }
@@ -1261,15 +1255,27 @@
   // 自动保存 AI 设置（表单改动即生效，无需手动保存）
   async function autoSaveAi() {
     const provider = setAiProvider.value;
+    const prevProvider = (currentConfig.ai && currentConfig.ai.provider) || 'deepseek';
     const providerKeys = { ...(currentConfig.ai?.providerKeys || {}) };
     providerKeys[provider] = setAiKey.value.trim();
+    // 每个提供商记忆各自的模型（v2.3.2）：
+    // 切换提供商时（change 顺序: autoSaveAi 先于 provider 专属 handler），下拉值仍是旧模型的，
+    // 它属于旧提供商 → 记到旧槽位；新提供商恢复它自己记忆的模型（没有则清空，避免残留）
+    const modelByProvider = { ...(currentConfig.ai?.modelByProvider || {}) };
+    let model = setAiModel.value || '';
+    if (prevProvider !== provider) {
+      if (model) modelByProvider[prevProvider] = model;
+      model = modelByProvider[provider] || '';
+    }
+    if (model) modelByProvider[provider] = model;
     const cfg = {
       ...currentConfig,
       ai: {
         ...currentConfig.ai,
         provider,
         providerKeys,
-        model: setAiModel.value || '',
+        model,
+        modelByProvider,
         deepThink: setAiDeepThink.value,
         showExplain: setAiExplain.value === 'on',
         showAsk: setAiAsk.value === 'on',
@@ -1305,6 +1311,10 @@
     const provider = setAiProvider.value;
     const providerKeys = { ...(currentConfig.ai?.providerKeys || {}) };
     providerKeys[provider] = setAiKey.value.trim();
+    // 同步每个提供商记忆的模型（v2.3.2）
+    const modelByProvider = { ...(currentConfig.ai?.modelByProvider || {}) };
+    const model = setAiModel.value || '';
+    if (model) modelByProvider[provider] = model;
     const cfg = {
       ...currentConfig,
       engine: setEngine.value,
@@ -1318,7 +1328,8 @@
         ...currentConfig.ai,
         provider,
         providerKeys,
-        model: setAiModel.value || '',
+        model,
+        modelByProvider,
         deepThink: setAiDeepThink.value,
         showExplain: setAiExplain.value === 'on',
         showAsk: setAiAsk.value === 'on',
