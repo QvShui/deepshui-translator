@@ -555,6 +555,62 @@
     setAiKey.placeholder = PROVIDER_HINTS[provider] || '粘贴 API Key 后点击右侧刷新拉取模型';
   }
 
+  // 用模型数组填充下拉框 + 保存多模态表到配置（拉取结果和缓存共用，v2.3.1）
+  async function applyModelList(models) {
+    setAiModel.innerHTML = '';
+    const multimodalMap = {};
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      // Retiring 模型标注警告（官方下线中但可能仍可用）；多模态标注 ✅，value 保持纯模型名
+      let label = m.id;
+      if (m.retiring) label += ' ⚠️Retiring';
+      if (m.multimodal) label += ' (多模态✅)';
+      opt.textContent = label;
+      setAiModel.appendChild(opt);
+      if (m.multimodal) multimodalMap[m.id] = true;
+    }
+    setAiModel.disabled = false;
+    // 保存多模态表到配置（选图按钮/多模态总结判断用）
+    try {
+      const cfg = await window.deepshui.getConfig();
+      cfg.ai = { ...(cfg.ai || {}), multimodalMap };
+      await window.deepshui.saveConfig(cfg);
+      currentConfig = cfg;
+    } catch (e) { /* 保存失败不影响模型列表 */ }
+    updateImageBtnVisibility();  // multimodalMap 更新后刷新选图按钮
+  }
+
+  // 从磁盘缓存加载某提供商的模型（不联网）
+  // 返回 { models, savedAt } 或 null（无缓存）；恢复之前的选中项，避免切换后丢选择
+  async function loadCachedModels(provider) {
+    const res = await window.deepshui.aiModelsCache(provider);
+    if (!(res.ok && res.cached && res.models.length)) return null;
+    const prev = setAiModel.value;
+    await applyModelList(res.models);
+    if ([...setAiModel.options].some(o => o.value === prev)) {
+      setAiModel.value = prev;
+    } else if (prev) {
+      // 之前选的模型不在缓存里（如跨提供商残留），补一个选项保持选中
+      const opt = document.createElement('option');
+      opt.value = prev;
+      opt.textContent = prev;
+      setAiModel.appendChild(opt);
+      setAiModel.value = prev;
+    } else {
+      const ai = currentConfig.ai || {};
+      if (ai.model && [...setAiModel.options].some(o => o.value === ai.model)) {
+        setAiModel.value = ai.model;
+      }
+    }
+    return { models: res.models, savedAt: res.savedAt };
+  }
+
+  function fmtCacheTime(savedAt) {
+    try { return new Date(savedAt).toLocaleString('zh-CN', { hour12: false }); }
+    catch { return '未知时间'; }
+  }
+
   async function refreshAiModels() {
     const key = setAiKey.value.trim();
     if (!key) {
@@ -576,36 +632,22 @@
     btnAiRefresh.disabled = false;
     progressEl.classList.add('hidden');
     if (res.ok && res.models && res.models.length) {
-      setAiModel.innerHTML = '';
-      const multimodalMap = {};
-      for (const m of res.models) {
-        const opt = document.createElement('option');
-        opt.value = m.id;
-        // Retiring 模型标注警告（官方下线中但可能仍可用）；多模态标注 ✅，value 保持纯模型名
-        let label = m.id;
-        if (m.retiring) label += ' ⚠️Retiring';
-        if (m.multimodal) label += ' (多模态✅)';
-        opt.textContent = label;
-        setAiModel.appendChild(opt);
-        if (m.multimodal) multimodalMap[m.id] = true;
-      }
-      setAiModel.disabled = false;
-      // 保存多模态表到配置（选图按钮/多模态总结判断用）
-      try {
-        const cfg = await window.deepshui.getConfig();
-        cfg.ai = { ...(cfg.ai || {}), multimodalMap };
-        await window.deepshui.saveConfig(cfg);
-        currentConfig = cfg;
-      } catch (e) { /* 保存失败不影响模型列表 */ }
+      await applyModelList(res.models);
       const mmCount = res.models.filter(m => m.multimodal).length;
-      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态。部分模型可能被误标为支持多模态，请注意甄别`;
+      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态，已缓存到本地。部分模型可能被误标为支持多模态，请注意甄别`;
       aiSettingsStatus.className = 'ok';
-      updateImageBtnVisibility();  // multimodalMap 更新后刷新选图按钮
     } else {
-      setAiModel.innerHTML = '<option value="">拉取失败</option>';
-      setAiModel.disabled = true;
-      aiSettingsStatus.textContent = `❌ ${res.error || '拉取失败'}`;
-      aiSettingsStatus.className = 'err';
+      // 拉取失败时回退到磁盘缓存（如网络波动），保留可用列表
+      const cached = await loadCachedModels(setAiProvider.value);
+      if (cached) {
+        aiSettingsStatus.textContent = `❌ ${res.error || '拉取失败'}。已回退到本地缓存（${fmtCacheTime(cached.savedAt)} 拉取）`;
+        aiSettingsStatus.className = 'err';
+      } else {
+        setAiModel.innerHTML = '<option value="">拉取失败</option>';
+        setAiModel.disabled = true;
+        aiSettingsStatus.textContent = `❌ ${res.error || '拉取失败'}`;
+        aiSettingsStatus.className = 'err';
+      }
     }
   }
 
@@ -1079,6 +1121,12 @@
     aiSettingsStatus.textContent = '';
     aiSettingsStatus.className = '';
     settingsOverlay.classList.remove('hidden');
+    // v2.3.1: 优先加载当前提供商的磁盘缓存，避免每次都要重新拉取探测
+    const cached = await loadCachedModels(setAiProvider.value);
+    if (cached) {
+      aiSettingsStatus.textContent = `✅ 已加载本地缓存的 ${cached.models.length} 个模型（${fmtCacheTime(cached.savedAt)} 拉取），点击「刷新」可重新探测`;
+      aiSettingsStatus.className = 'ok';
+    }
   }
 
   async function saveSettings() {
@@ -1390,13 +1438,21 @@
   setAiModel.addEventListener('change', autoSaveAi);
   setAiKey.addEventListener('change', autoSaveAi); // 失焦时保存
 
-  // 切换提供商：加载该商的 key 到输入框 + 清空模型选择（不同商模型不通用）
-  setAiProvider.addEventListener('change', () => {
+  // 切换提供商：加载该商的 key 到输入框 + 优先用磁盘缓存填充模型（v2.3.1，不重复拉取）
+  setAiProvider.addEventListener('change', async () => {
     const ai = currentConfig.ai || {};
     setAiKey.value = (ai.providerKeys || {})[setAiProvider.value] || '';
     setAiModel.innerHTML = '<option value="">切换提供商后请重新拉取模型</option>';
     setAiModel.disabled = true;
     updateAiKeyPlaceholder(setAiProvider.value);
+    const cached = await loadCachedModels(setAiProvider.value);
+    if (cached) {
+      aiSettingsStatus.textContent = `✅ 已加载 ${setAiProvider.value} 的本地缓存模型（${fmtCacheTime(cached.savedAt)} 拉取），点击「刷新」可重新探测`;
+      aiSettingsStatus.className = 'ok';
+    } else {
+      aiSettingsStatus.textContent = '该提供商暂无缓存模型，点击「刷新」拉取';
+      aiSettingsStatus.className = '';
+    }
   });
 
   // 模型拉取进度（两阶段: 可用性探测 → 多模态探测，设置面板内进度条）

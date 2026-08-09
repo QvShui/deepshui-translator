@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('deepshui', {
 
   // AI 引擎
   aiModels: (provider, apiKey) => ipcRenderer.invoke('ai-models', { provider, apiKey }),
+  aiModelsCache: (provider) => ipcRenderer.invoke('ai-models-cache', { provider }),
   aiChat: (requestId, messages, kind) => ipcRenderer.invoke('ai-chat', { requestId, messages, kind }),
   aiCancel: (requestId) => ipcRenderer.invoke('ai-cancel', requestId),
   onAiEvent: (callback) => {

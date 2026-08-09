@@ -78,6 +78,28 @@ function saveConfig(cfg) {
   return loadConfig();
 }
 
+// ── 模型列表磁盘缓存（v2.3.1）──────────────────────────────
+// 策略: 每个提供商已拉取（含探测）过的模型存到磁盘，切换提供商直接读缓存，
+//       只有用户主动点「刷新」才重新拉取更新。
+// 文件: userData/models-cache.json，形如 { [provider]: { savedAt, models: [{id,multimodal,retiring}] } }
+function getModelsCachePath() {
+  return path.join(app.getPath('userData'), 'models-cache.json');
+}
+function loadModelsCache() {
+  try {
+    const j = JSON.parse(fs.readFileSync(getModelsCachePath(), 'utf8'));
+    return (j && typeof j === 'object') ? j : {};
+  } catch { return {}; }
+}
+function saveModelsCache(provider, models) {
+  try {
+    const cache = loadModelsCache();
+    cache[provider] = { savedAt: new Date().toISOString(), models };
+    fs.mkdirSync(path.dirname(getModelsCachePath()), { recursive: true });
+    fs.writeFileSync(getModelsCachePath(), JSON.stringify(cache, null, 2), { mode: 0o600 });
+  } catch { /* 缓存写失败不影响主流程 */ }
+}
+
 // ── 语言代码映射（统一代码 → 各引擎代码）────────────────
 // 统一: zh-CN, en, ja, ko, fr, de
 const LANG_MAP = {
@@ -667,6 +689,17 @@ ipcMain.handle('save-config', async (event, cfg) => {
 // 进行中的流式请求表: requestId -> AbortController
 const aiAborters = new Map();
 
+// 读取磁盘上某提供商上次拉取的模型缓存（纯读盘，不联网）
+ipcMain.handle('ai-models-cache', async (event, { provider } = {}) => {
+  const cfg = loadConfig();
+  const prov = provider || cfg.ai.provider || 'deepseek';
+  const entry = loadModelsCache()[prov];
+  if (!entry || !Array.isArray(entry.models) || entry.models.length === 0) {
+    return { ok: true, cached: false, models: [] };
+  }
+  return { ok: true, cached: true, savedAt: entry.savedAt, models: entry.models };
+});
+
 // 拉取 AI 提供商可用模型列表 + 自动多模态检测
 // key 优先用渲染层传入的，其次配置的 providerKeys
 ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
@@ -712,6 +745,8 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     const models = mmResults
       .map(r => ({ id: r.id, multimodal: r.ok, retiring: retiringSet.has(r.id) }))
       .sort((a, b) => a.id.localeCompare(b.id, 'en', { sensitivity: 'base' }));
+    // 探测成功即写入磁盘缓存，下次切换提供商直接读缓存（v2.3.1）
+    saveModelsCache(prov, models);
     return { ok: true, models };
   } catch (e) {
     return { ok: false, error: e.message };
