@@ -111,6 +111,8 @@
   const aiAskImages = document.getElementById('ai-ask-images');
   const aiSummaryStart = document.getElementById('ai-summary-start');
   const aiSummaryEnd = document.getElementById('ai-summary-end');
+  // 总结页数范围（仅内存态，v2.3.4 不持久化）：每次启动重置为默认 1-16，本次会话内可改
+  const summaryRange = { start: 1, end: 16 };
   const fulltextProgress = document.getElementById('fulltext-progress');
   const fulltextProgressBar = document.getElementById('fulltext-progress-bar');
   const fulltextProgressText = document.getElementById('fulltext-progress-text');
@@ -597,8 +599,8 @@
     setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
     setAiMm.value = ai.multimodalEnabled === false ? 'off' : 'on';
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
-    // 总结页数范围回填（clamp 到 PDF 实际页数/多模态上限）
-    const rc = clampSummaryRange(ai.summaryStart || 1, ai.summaryEnd || 16, false);
+    // 总结页数范围回填（内存态，clamp 到 PDF 实际页数/多模态上限）
+    const rc = clampSummaryRange(summaryRange.start, summaryRange.end, false);
     aiSummaryStart.value = rc.start;
     aiSummaryEnd.value = rc.end;
     // 模型下拉：优先该提供商记忆的模型（modelByProvider），避免跨提供商残留旧模型（v2.3.2）
@@ -862,8 +864,8 @@
     }
     // 防御: 起始/结束页锁定到实际页数（旧配置可能超出新文档，getPage 会抛异常）
     const pc = PdfViewer.pageCount || 1;
-    const start = Math.min(Math.max(1, ai.summaryStart || 1), pc);
-    const end = Math.max(start, Math.min(ai.summaryEnd || 16, pc));
+    const start = Math.min(Math.max(1, summaryRange.start), pc);
+    const end = Math.max(start, Math.min(summaryRange.end, pc));
 
     // 多模态模型：渲染页范围为网格图上传总结（不注入全文文本）
     // 多模态总开关关闭时走文本提取路径
@@ -986,7 +988,7 @@
     return { start, end };
   }
 
-  // PDF 打开后：页数输入框锁定实际页数（max 属性 + 显示值 clamp + 持久化）
+  // PDF 打开后：页数输入框锁定实际页数（max 属性 + 显示值 clamp），同步内存态
   function clampSummaryInputsToDoc() {
     const maxPage = PdfViewer.pageCount || 0;
     if (!maxPage) return;
@@ -998,8 +1000,9 @@
     if (c.start !== start || c.end !== end) {
       aiSummaryStart.value = c.start;
       aiSummaryEnd.value = c.end;
-      saveSummaryRange();
     }
+    summaryRange.start = c.start;
+    summaryRange.end = c.end;
   }
 
   async function enterImageSelectMode() {
@@ -1365,8 +1368,8 @@
     rebuildModelSwitch();  // 顶部快速切换下拉同步当前模型（v2.3.3）
   }
 
-  // 保存总结页数范围（提问框旁输入，clamp 到 PDF 实际页数/多模态上限）
-  async function saveSummaryRange() {
+  // 保存总结页数范围（仅内存态 v2.3.4：不写配置，重启即恢复默认 1-16）
+  function saveSummaryRange() {
     let start = parseInt(aiSummaryStart.value) || 1;
     let end = parseInt(aiSummaryEnd.value) || 16;
     const c = clampSummaryRange(start, end);
@@ -1375,11 +1378,8 @@
     // 回写 clamp 后的值，让用户看到生效范围
     aiSummaryStart.value = start;
     aiSummaryEnd.value = end;
-    const ai = { ...(currentConfig.ai || {}) };
-    if (ai.summaryStart === start && ai.summaryEnd === end) return;
-    const cfg = { ...currentConfig, ai: { ...ai, summaryStart: start, summaryEnd: end } };
-    await window.deepshui.saveConfig(cfg);
-    currentConfig = cfg;
+    summaryRange.start = start;
+    summaryRange.end = end;
   }
 
   // 保存全部设置（翻译引擎 + AI，用于「保存并退出」）
@@ -1618,10 +1618,10 @@
 
     const ai = currentConfig.ai || {};
     if (ai.apiKey && ai.model && ai.showAsk && isCurrentModelMultimodal() && PdfViewer.pageCount) {
-      // 多模态模型：重新渲染页范围图片并总结
+      // 多模态模型：重新渲染页范围图片并总结（直接读输入框当前值，避免配置保存竞态 v2.3.4）
       const MM_MAX_PAGES = 16;
-      const start = Math.max(1, ai.summaryStart || 1);
-      const end = Math.max(start, Math.min(ai.summaryEnd || 16, PdfViewer.pageCount));
+      const start = Math.max(1, parseInt(aiSummaryStart.value) || 1);
+      const end = Math.max(start, Math.min(parseInt(aiSummaryEnd.value) || 16, PdfViewer.pageCount));
       if (end - start + 1 > MM_MAX_PAGES) {
         clearAiContent(aiAskContent);
         aiAskContent.textContent =
