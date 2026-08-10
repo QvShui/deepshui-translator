@@ -421,6 +421,40 @@ html, body {
   outline: none;
 }
 
+/* 开关控件（替代 on/off 下拉，v2.3.6） */
+.form-row .switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: #d1d5db;
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  border: none;
+  transition: background .2s;
+}
+.form-row .switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  transition: left .2s;
+}
+.form-row .switch:checked {
+  background: var(--bg-accent);
+}
+.form-row .switch:checked::after {
+  left: 18px;
+}
+
 .form-row input:focus, .form-row select:focus {
   border-color: var(--bg-accent);
 }

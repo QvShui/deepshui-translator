@@ -581,6 +581,20 @@
     // 多模态开关关闭/模型不支持 → 隐藏选图按钮并退出选图模式
     updateImageBtnVisibility();
     if (!isCurrentModelMultimodal() && imageSelectMode) exitImageSelectMode();
+    // 设置面板：多模态开关行仅当前模型本身支持多模态时显示（v2.3.6 修 bug1）
+    updateMultimodalRow();
+  }
+
+  // 模型本身是否支持多模态（只看探测表，不受开关状态影响）
+  function modelSupportsMultimodal() {
+    const ai = currentConfig.ai || {};
+    return !!(ai.model && (ai.multimodalMap || {})[ai.model]);
+  }
+
+  // 设置面板多模态开关行：模型非多模态时隐藏（开关对文本模型无意义）
+  function updateMultimodalRow() {
+    const row = document.getElementById('row-ai-mm');
+    if (row) row.classList.toggle('hidden', !modelSupportsMultimodal());
   }
 
   // 选图按钮仅当前模型可用多模态时显示
@@ -594,10 +608,10 @@
     // 每 provider 独立 key 槽位
     setAiKey.value = (ai.providerKeys || {})[ai.provider || 'deepseek'] || '';
     setAiDeepThink.value = ai.deepThink || 'off';
-    setAiExplain.value = ai.showExplain === false ? 'off' : 'on';
-    setAiAsk.value = ai.showAsk === false ? 'off' : 'on';
-    setAiIsolate.value = ai.isolateContext === false ? 'off' : 'on';
-    setAiMm.value = ai.multimodalEnabled === false ? 'off' : 'on';
+    setAiExplain.checked = ai.showExplain !== false;
+    setAiAsk.checked = ai.showAsk !== false;
+    setAiIsolate.checked = ai.isolateContext !== false;
+    setAiMm.checked = ai.multimodalEnabled !== false;
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
     // 总结页数范围回填（内存态，clamp 到 PDF 实际页数/多模态上限）
     const rc = clampSummaryRange(summaryRange.start, summaryRange.end, false);
@@ -655,6 +669,7 @@
       currentConfig = cfg;
     } catch (e) { /* 保存失败不影响模型列表 */ }
     updateImageBtnVisibility();  // multimodalMap 更新后刷新选图按钮
+    updateMultimodalRow();       // 模型列表更新后刷新多模态开关行可见性（v2.3.6）
     rebuildModelSwitch();        // 模型列表变化后同步顶部快速切换下拉（v2.3.3）
   }
 
@@ -1187,6 +1202,7 @@
 
     // AI 字段回填
     fillAiForm(config.ai || {});
+    updateMultimodalRow();  // 打开设置时同步多模态开关行可见性（v2.3.6）
 
     settingsStatus.textContent = '';
     settingsStatus.className = '';
@@ -1355,10 +1371,10 @@
         model,
         modelByProvider,
         deepThink: setAiDeepThink.value,
-        showExplain: setAiExplain.value === 'on',
-        showAsk: setAiAsk.value === 'on',
-        isolateContext: setAiIsolate.value !== 'off',
-        multimodalEnabled: setAiMm.value === 'on',
+        showExplain: setAiExplain.checked,
+        showAsk: setAiAsk.checked,
+        isolateContext: setAiIsolate.checked,
+        multimodalEnabled: setAiMm.checked,
       },
     };
     await window.deepshui.saveConfig(cfg);
@@ -1407,10 +1423,10 @@
         model,
         modelByProvider,
         deepThink: setAiDeepThink.value,
-        showExplain: setAiExplain.value === 'on',
-        showAsk: setAiAsk.value === 'on',
-        isolateContext: setAiIsolate.value !== 'off',
-        multimodalEnabled: setAiMm.value === 'on',
+        showExplain: setAiExplain.checked,
+        showAsk: setAiAsk.checked,
+        isolateContext: setAiIsolate.checked,
+        multimodalEnabled: setAiMm.checked,
       },
     };
     await window.deepshui.saveConfig(cfg);
@@ -1431,10 +1447,10 @@
       setAiKey.value.trim() !== ((ai.providerKeys || {})[provider] || '') ||
       setAiModel.value !== (ai.model || '') ||
       setAiDeepThink.value !== (ai.deepThink || 'off') ||
-      (setAiExplain.value === 'on') !== (ai.showExplain !== false) ||
-      (setAiAsk.value === 'on') !== (ai.showAsk !== false) ||
-      (setAiIsolate.value !== 'off') !== (ai.isolateContext !== false) ||
-      (setAiMm.value === 'on') !== (ai.multimodalEnabled !== false);
+      setAiExplain.checked !== (ai.showExplain !== false) ||
+      setAiAsk.checked !== (ai.showAsk !== false) ||
+      setAiIsolate.checked !== (ai.isolateContext !== false) ||
+      setAiMm.checked !== (ai.multimodalEnabled !== false);
     // 翻译引擎表单（手动保存）
     const engineChanged =
       setEngine.value !== (currentConfig.engine || 'youdao') ||
