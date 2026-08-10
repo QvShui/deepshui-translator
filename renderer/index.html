@@ -208,10 +208,6 @@
               <button id="btn-ai-refresh" title="拉取模型列表">🔄</button>
             </div>
           </div>
-          <div class="form-row" id="row-ai-mm">
-            <label>多模态功能</label>
-            <input type="checkbox" id="set-ai-multimodal" class="switch" checked title="关闭后不允许上传图片，总结改为提取全文文本">
-          </div>
           <div class="form-row">
             <label>深度思考</label>
             <select id="set-ai-deepthink">
@@ -231,7 +227,11 @@
           </div>
           <div class="form-row">
             <label title="开启后，AI 解释与 AI 问答将隔离到两个会话中，AI 解释将仅仅依照当前所画段落进行解释，无法联系上下文">隔离上下文</label>
-            <input type="checkbox" id="set-ai-isolate" class="switch" checked>
+            <input type="checkbox" id="set-ai-isolate" class="switch" checked title="开启后，AI 解释与 AI 问答将隔离到两个会话中，AI 解释将仅仅依照当前所画段落进行解释，无法联系上下文">
+          </div>
+          <div class="form-row" id="row-ai-mm">
+            <label>多模态功能</label>
+            <input type="checkbox" id="set-ai-multimodal" class="switch" checked title="关闭后不允许上传图片，总结改为提取全文文本">
           </div>
           <!-- 模型拉取进度条 -->
           <div id="ai-models-progress" class="hidden">
