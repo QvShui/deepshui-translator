@@ -586,9 +586,11 @@
   }
 
   // 模型本身是否支持多模态（只看探测表，不受开关状态影响）
+  // 优先读设置面板下拉当前选中值：拉取/切换后默认选中的模型也要即时生效（v2.3.6）
   function modelSupportsMultimodal() {
     const ai = currentConfig.ai || {};
-    return !!(ai.model && (ai.multimodalMap || {})[ai.model]);
+    const model = setAiModel.value || ai.model || '';
+    return !!(model && (ai.multimodalMap || {})[model]);
   }
 
   // 设置面板多模态开关行：模型非多模态时隐藏（开关对文本模型无意义）
@@ -717,7 +719,12 @@
     btnAiRefresh.disabled = false;
     progressEl.classList.add('hidden');
     if (res.ok && res.models && res.models.length) {
+      const prevModel = setAiModel.value;
       await applyModelList(res.models);
+      // 刷新后恢复之前选中的模型（仍在列表里时），保持下拉与配置一致
+      if (prevModel && [...setAiModel.options].some(o => o.value === prevModel)) {
+        setAiModel.value = prevModel;
+      }
       const mmCount = res.models.filter(m => m.multimodal).length;
       aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态，已缓存到本地。部分模型可能被误标为支持多模态，请注意甄别`;
       aiSettingsStatus.className = 'ok';
@@ -1034,7 +1041,7 @@
     // 顶部提示条（含退出按钮）
     selectTipEl = document.createElement('div');
     selectTipEl.id = 'image-select-tip';
-    selectTipEl.innerHTML = '<span>🖼 点击蓝色区域选择位图，或直接拖拽框选任意区域（可多选）。部分模型标称的多模态并不能真正支持，多数模型必须填入提示词才能上传图片</span><button id="image-select-done">完成</button>';
+    selectTipEl.innerHTML = '<span> 点击蓝色区域选择位图，或直接拖拽框选任意区域（可多选）。部分模型标称的多模态并不能真正支持，多数模型必须填入提示词才能上传图片</span><button id="image-select-done">完成</button>';
     document.body.appendChild(selectTipEl);
     document.getElementById('image-select-done').addEventListener('click', exitImageSelectMode);
 
