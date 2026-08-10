@@ -1655,11 +1655,34 @@
       } else {
         aiAskContent.textContent = '⚠️ 页面渲染失败，请重试';
       }
-    } else if (fullText && ai.apiKey && ai.model) {
+    } else if (ai.apiKey && ai.model && PdfViewer.pageCount) {
+      // 文本模型：按当前页数范围重新提取全文再总结（v2.3.5 修 bug1 文本路径——
+      // 之前只重发指令，fullText 仍是打开 PDF 时按旧范围提取的）
       clearAiContent(aiAskContent);
-      aiAskContent.textContent = '已重置对话，正在重新喂入全文...';
-      // 重新喂全文：全文通过 system 注入（sendAsk 自动带上），只需发总结指令
-      sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
+      aiAskContent.textContent = '已重置对话，正在重新提取全文...';
+      const pc3 = PdfViewer.pageCount || 1;
+      const startT = Math.max(1, parseInt(aiSummaryStart.value) || 1);
+      const endT = Math.max(startT, Math.min(parseInt(aiSummaryEnd.value) || 16, pc3));
+      fulltextProgress.classList.remove('hidden');
+      fulltextProgressBar.style.width = '0%';
+      fulltextProgressText.textContent = '正在提取全文 0%';
+      try {
+        const text = await PdfViewer.extractFullText(({ current, total }) => {
+          const pct = Math.round(current / total * 100);
+          fulltextProgressBar.style.width = pct + '%';
+          fulltextProgressText.textContent = `正在提取全文 ${current}/${total} (${pct}%)`;
+        }, { start: startT, end: endT });
+        fulltextProgress.classList.add('hidden');
+        if (!text || !text.trim()) {
+          aiAskContent.textContent = '⚠️ 该页数范围无可提取文本，请检查总结页数设置';
+          return;
+        }
+        fullText = text;
+        sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
+      } catch (e) {
+        fulltextProgress.classList.add('hidden');
+        aiAskContent.textContent = '⚠️ 全文提取失败: ' + e.message;
+      }
     } else if (fullText) {
       clearAiContent(aiAskContent);
       aiAskContent.textContent = '已重置对话。配置 AI 引擎后提问会自动带上全文。';
