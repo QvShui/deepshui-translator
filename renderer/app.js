@@ -7,49 +7,47 @@
   'use strict';
 
   // 引擎凭证字段定义（设置面板动态表单）
+  // 翻译服务选项（v2.4.0-beta.2）: 百度有领域翻译（不含 novel），其他引擎仅通用文本
+  const TRANSLATE_SERVICES = {
+    general: [{ value: '', label: '通用文本' }],
+    baidu: [
+      { value: '', label: '通用文本' },
+      { value: 'academic', label: '学术论文' },
+      { value: 'it', label: '信息技术' },
+      { value: 'finance', label: '金融财经' },
+      { value: 'machinery', label: '机械制造' },
+      { value: 'senimed', label: '生物医药' },
+      { value: 'aerospace', label: '航空航天' },
+      { value: 'wiki', label: '人文社科' },
+      { value: 'news', label: '新闻资讯' },
+      { value: 'law', label: '法律法规' },
+      { value: 'contract', label: '合同' },
+    ],
+  };
+
   const ENGINE_FIELDS = {
     youdao: [
-      { key: 'service', label: '翻译服务', type: 'select', options: [
-        { value: '', label: '通用文本' },
-      ] },
+      { key: 'service', label: '翻译服务', type: 'select', options: TRANSLATE_SERVICES.general },
       { key: 'appKey', label: '应用 ID', type: 'text', placeholder: '应用 ID' },
       { key: 'appSecret', label: '应用密钥', type: 'password', placeholder: '应用密钥' },
     ],
     baidu: [
-      { key: 'service', label: '翻译服务', type: 'select', options: [
-        { value: '', label: '通用文本' },
-        { value: 'academic', label: '学术论文' },
-        { value: 'it', label: '信息技术' },
-        { value: 'finance', label: '金融财经' },
-        { value: 'machinery', label: '机械制造' },
-        { value: 'senimed', label: '生物医药' },
-        { value: 'aerospace', label: '航空航天' },
-        { value: 'wiki', label: '人文社科' },
-        { value: 'news', label: '新闻资讯' },
-        { value: 'law', label: '法律法规' },
-        { value: 'contract', label: '合同' },
-      ] },
+      { key: 'service', label: '翻译服务', type: 'select', options: TRANSLATE_SERVICES.baidu },
       { key: 'appid', label: 'appid', type: 'text', placeholder: 'appid' },
       { key: 'secretKey', label: '密钥', type: 'password', placeholder: '密钥' },
     ],
     xunfei: [
-      { key: 'service', label: '翻译服务', type: 'select', options: [
-        { value: '', label: '通用文本' },
-      ] },
+      { key: 'service', label: '翻译服务', type: 'select', options: TRANSLATE_SERVICES.general },
       { key: 'appid', label: 'appid', type: 'text', placeholder: 'appid' },
       { key: 'apiKey', label: 'API Key', type: 'text', placeholder: 'API Key' },
       { key: 'apiSecret', label: 'API Secret', type: 'password', placeholder: 'API Secret' },
     ],
     deepl: [
-      { key: 'service', label: '翻译服务', type: 'select', options: [
-        { value: '', label: '通用文本' },
-      ] },
+      { key: 'service', label: '翻译服务', type: 'select', options: TRANSLATE_SERVICES.general },
       { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'DeepL API Key (免费版以 :fx 结尾)' },
     ],
     google: [
-      { key: 'service', label: '翻译服务', type: 'select', options: [
-        { value: '', label: '通用文本' },
-      ] },
+      { key: 'service', label: '翻译服务', type: 'select', options: TRANSLATE_SERVICES.general },
       { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'Google Cloud API Key' },
     ],
   };
@@ -74,6 +72,7 @@
   const btnSettings = document.getElementById('btn-settings');
   const targetLang = document.getElementById('target-lang');
   const engineSelect = document.getElementById('engine-select');
+  const translateService = document.getElementById('translate-service');  // 翻译栏「翻译服务」下拉（v2.4.0-beta.2）
   const aiModelSwitch = document.getElementById('ai-model-switch');  // 顶部快速切换 AI 模型（v2.3.3）
 
   // 侧边栏
@@ -888,6 +887,21 @@
     return cred;
   }
 
+  // 翻译栏「翻译服务」下拉（v2.4.0-beta.2）: 随引擎切换选项，回填已保存服务
+  function renderTranslateService() {
+    const engine = engineSelect.value;
+    const opts = TRANSLATE_SERVICES[engine] || TRANSLATE_SERVICES.general;
+    translateService.innerHTML = '';
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      translateService.appendChild(opt);
+    }
+    const saved = ((currentConfig[engine] || {}).service) || '';
+    translateService.value = [...translateService.options].some(o => o.value === saved) ? saved : '';
+  }
+
   // ── 启动初始化 ───────────────────────────
   async function initConfig() {
     const cfg = await window.deepshui.getConfig();
@@ -898,6 +912,7 @@
     setEngine.value = cfg.engine || 'youdao';
     setLang.value = cfg.targetLang || 'zh-CN';
     renderEngineFields(setEngine.value);
+    renderTranslateService();
 
     // AI 配置回填
     fillAiForm(cfg.ai || {});
@@ -1323,6 +1338,7 @@
     // 同步侧边栏
     targetLang.value = cfg.targetLang;
     engineSelect.value = cfg.engine;
+    renderTranslateService();
     settingsStatus.textContent = '✅ 配置已保存';
     settingsStatus.className = 'ok';
     applyAiVisibility();
@@ -1510,6 +1526,7 @@
     currentConfig = cfg;
     targetLang.value = cfg.targetLang;
     engineSelect.value = cfg.engine;
+    renderTranslateService();
     maybeSwitchSession(cfg);
     applyAiVisibility();
   }
@@ -1793,6 +1810,16 @@
   engineSelect.addEventListener('change', async () => {
     const cfg = await window.deepshui.getConfig();
     cfg.engine = engineSelect.value;
+    await window.deepshui.saveConfig(cfg);
+    currentConfig = cfg;
+    renderTranslateService();
+  });
+
+  // 侧边栏切换翻译服务 → 保存到当前引擎配置（v2.4.0-beta.2）
+  translateService.addEventListener('change', async () => {
+    const engine = engineSelect.value;
+    const cfg = await window.deepshui.getConfig();
+    cfg[engine] = { ...(cfg[engine] || {}), service: translateService.value };
     await window.deepshui.saveConfig(cfg);
     currentConfig = cfg;
   });
