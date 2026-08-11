@@ -15,7 +15,7 @@ const DEFAULT_CONFIG = () => ({
   engine: 'youdao',
   targetLang: 'zh-CN',
   youdao: { appKey: '', appSecret: '' },
-  baidu: { appid: '', secretKey: '' },
+  baidu: { appid: '', secretKey: '', service: '' },  // service: ''=通用文本; 领域代码见 translateBaidu
   xunfei: { appid: '', apiKey: '', apiSecret: '' },
   deepl: { apiKey: '' },
   google: { apiKey: '' },
@@ -187,7 +187,53 @@ function youdaoError(code) {
 }
 
 // ── 百度翻译 ─────────────────────────────────────────────
+// 翻译服务（v2.4.0-beta.2）: cred.service 为空=通用文本(/api/trans/vip/translate);
+// 有值=领域文本(/api/trans/vip/fieldtranslate，签名含 domain)，失败自动回落通用
 async function translateBaidu(text, from, to, cred) {
+  const { service } = cred;
+  if (service) {
+    const errMsg = await translateBaiduField(text, from, to, cred);
+    if (!errMsg) return { ok: true, text: translateBaiduField._last };
+    // 领域失败 → 回落通用文本
+    const fallback = await translateBaiduGeneral(text, from, to, cred);
+    if (fallback.ok) return fallback;
+    return { ok: false, error: `${errMsg}；回落通用也失败: ${fallback.error}` };
+  }
+  return translateBaiduGeneral(text, from, to, cred);
+}
+
+// 领域文本翻译：成功返回 null 并置 _last 译文；失败返回错误信息
+async function translateBaiduField(text, from, to, cred) {
+  const { appid, secretKey, service } = cred;
+  const salt = String(Date.now());
+  const sign = crypto.createHash('md5')
+    .update(appid + text + salt + service + secretKey).digest('hex');
+  const params = new URLSearchParams({
+    q: text, from: mapLang('baidu', from), to: mapLang('baidu', to),
+    appid, salt, sign, domain: service,
+  });
+  try {
+    const res = await httpRequest({
+      hostname: 'fanyi-api.baidu.com', path: '/api/trans/vip/fieldtranslate', method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(params.toString()),
+        'User-Agent': 'DeepshuiTranslator/1.0',
+      },
+    }, params.toString());
+    const parsed = JSON.parse(res.data);
+    if (parsed.error_code === '0' || (!parsed.error_code && parsed.trans_result)) {
+      translateBaiduField._last = (parsed.trans_result || []).map(t => t.dst).join('\n');
+      return null;
+    }
+    return `百度领域错误码 ${parsed.error_code} (${parsed.error_msg || '未知错误'})`;
+  } catch (e) {
+    return `百度领域翻译网络错误: ${e.message}`;
+  }
+}
+
+// 通用文本翻译
+async function translateBaiduGeneral(text, from, to, cred) {
   const { appid, secretKey } = cred;
   const salt = String(Date.now());
   const sign = crypto.createHash('md5')

@@ -9,22 +9,47 @@
   // 引擎凭证字段定义（设置面板动态表单）
   const ENGINE_FIELDS = {
     youdao: [
+      { key: 'service', label: '翻译服务', type: 'select', options: [
+        { value: '', label: '通用文本' },
+      ] },
       { key: 'appKey', label: '应用 ID', type: 'text', placeholder: '应用 ID' },
       { key: 'appSecret', label: '应用密钥', type: 'password', placeholder: '应用密钥' },
     ],
     baidu: [
+      { key: 'service', label: '翻译服务', type: 'select', options: [
+        { value: '', label: '通用文本' },
+        { value: 'academic', label: '学术论文' },
+        { value: 'it', label: '信息技术' },
+        { value: 'finance', label: '金融财经' },
+        { value: 'machinery', label: '机械制造' },
+        { value: 'senimed', label: '生物医药' },
+        { value: 'aerospace', label: '航空航天' },
+        { value: 'wiki', label: '人文社科' },
+        { value: 'news', label: '新闻资讯' },
+        { value: 'law', label: '法律法规' },
+        { value: 'contract', label: '合同' },
+      ] },
       { key: 'appid', label: 'appid', type: 'text', placeholder: 'appid' },
       { key: 'secretKey', label: '密钥', type: 'password', placeholder: '密钥' },
     ],
     xunfei: [
+      { key: 'service', label: '翻译服务', type: 'select', options: [
+        { value: '', label: '通用文本' },
+      ] },
       { key: 'appid', label: 'appid', type: 'text', placeholder: 'appid' },
       { key: 'apiKey', label: 'API Key', type: 'text', placeholder: 'API Key' },
       { key: 'apiSecret', label: 'API Secret', type: 'password', placeholder: 'API Secret' },
     ],
     deepl: [
+      { key: 'service', label: '翻译服务', type: 'select', options: [
+        { value: '', label: '通用文本' },
+      ] },
       { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'DeepL API Key (免费版以 :fx 结尾)' },
     ],
     google: [
+      { key: 'service', label: '翻译服务', type: 'select', options: [
+        { value: '', label: '通用文本' },
+      ] },
       { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'Google Cloud API Key' },
     ],
   };
@@ -823,15 +848,26 @@
       const label = document.createElement('label');
       label.textContent = f.label;
 
-      const input = document.createElement('input');
-      input.type = f.type;
-      input.placeholder = f.placeholder;
-      input.dataset.key = f.key;
+      let control;
+      if (f.type === 'select' && f.options) {
+        control = document.createElement('select');
+        for (const opt of f.options) {
+          const o = document.createElement('option');
+          o.value = opt.value;
+          o.textContent = opt.label;
+          control.appendChild(o);
+        }
+      } else {
+        control = document.createElement('input');
+        control.type = f.type;
+        control.placeholder = f.placeholder;
+      }
+      control.dataset.key = f.key;
 
       row.appendChild(label);
-      row.appendChild(input);
+      row.appendChild(control);
       engineFields.appendChild(row);
-      fieldInputs[engine][f.key] = input;
+      fieldInputs[engine][f.key] = control;
     }
 
     // 回填已保存的凭证
@@ -873,7 +909,7 @@
     // 检查默认引擎凭证
     const cred = cfg[cfg.engine] || {};
     const def = ENGINE_FIELDS[cfg.engine] || [];
-    const missing = def.some(f => !cred[f.key]);
+    const missing = def.some(f => !cred[f.key] && f.type !== 'select');
     if (missing) {
       showError(`首次使用：请先在 ⚙️ 设置 中配置 翻译引擎 API 凭证`);
     }
@@ -1274,7 +1310,7 @@
     if (engineTabActive) {
       const def = ENGINE_FIELDS[cfg.engine] || [];
       const cred = cfg[cfg.engine] || {};
-      const missing = def.filter(f => !cred[f.key]).map(f => f.label);
+      const missing = def.filter(f => !cred[f.key] && f.type !== 'select').map(f => f.label);
       if (missing.length > 0) {
         settingsStatus.textContent = `⚠️ 请填写 ${ENGINE_LABELS[cfg.engine]} 的: ${missing.join('、')}`;
         settingsStatus.className = 'err';
@@ -1296,7 +1332,7 @@
     const engine = setEngine.value;
     const cred = collectCredentials(engine);
     const def = ENGINE_FIELDS[engine] || [];
-    const missing = def.filter(f => !cred[f.key]).map(f => f.label);
+    const missing = def.filter(f => !cred[f.key] && f.type !== 'select').map(f => f.label);
     if (missing.length > 0) {
       settingsStatus.textContent = `⚠️ 请先填写 ${ENGINE_LABELS[engine]} 的: ${missing.join('、')}`;
       settingsStatus.className = 'err';
