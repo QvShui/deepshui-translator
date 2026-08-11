@@ -29,6 +29,8 @@ const DEFAULT_CONFIG = () => ({
     showAsk: false,
     isolateContext: true,  // 隔离解释与问答上下文（默认开启）
     multimodalEnabled: true,  // 多模态总开关（关闭后不允许上传图片，总结走文本提取）
+    webSearchEnabled: false,  // 联网搜索-Beta 开关（v2.4.0，仅千问生效，默认关闭）
+    webSearchMap: {},  // 探测到的联网模型表: { [provider]: { modelId: true } }
     summaryStart: 1,   // AI 总结起始页（默认 1）
     summaryEnd: 16,    // AI 总结结束页（默认 16）
   },
@@ -320,10 +322,10 @@ function translateWith(engine, text, from, to, cfg) {
 
 // ── AI 提供商（DeepSeek / 千问 / 豆包 / Kimi）────────────
 const AI_PROVIDERS = {
-  deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', chatPath: '/chat/completions', modelsPath: '/models' },
-  qwen:     { label: '千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatPath: '/chat/completions', modelsPath: '/models' },
-  doubao:   { label: '豆包', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', chatPath: '/chat/completions', modelsPath: '/models' },
-  kimi:     { label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', chatPath: '/chat/completions', modelsPath: '/models' },
+  deepseek: { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', chatPath: '/chat/completions', modelsPath: '/models' },
+  qwen:     { id: 'qwen', label: '千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatPath: '/chat/completions', modelsPath: '/models' },
+  doubao:   { id: 'doubao', label: '豆包', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', chatPath: '/chat/completions', modelsPath: '/models' },
+  kimi:     { id: 'kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', chatPath: '/chat/completions', modelsPath: '/models' },
 };
 
 function getAiProvider(name) {
@@ -418,26 +420,42 @@ function solidPng(r, g, b) {
   return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]).toString('base64');
 }
 
-// 单次探测：withImage=false 文本探测（验证模型已开通、真正可对话）
-//           withImage=true  图像探测（验证多模态）
-// 200/429 = 通过（429 说明模型存在仅被限流）；4xx/5xx/超时 = 不可用
-// 注1: /models 列表含未开通模型（豆包返回 404，千问返回 400/403），必须实测
-// 注2: 图像探测只看状态码——有的网关对文本模型静默丢弃图片仍返回 200
-//      （实测: 千问列表里的 deepseek-r1），多模态标注可能误标，UI 已加提示
-// 注3: 图像探测只认 200——429 限流时保守判不支持（误标多模态会把图发给文本模型导致报错，
-//      漏标只是退化为文本总结，保守方向更安全）；文本探测 429 仍判存活
-function probeModel(provider, apiKey, model, withImage, pngB64) {
+// 单次探测：kind='chat'   文本探测（验证模型已开通、真正可对话）
+//           kind='mm'     图像探测（验证多模态）
+//           kind='search' 联网探测（验证支持联网搜索，按提供商分派探测方式）
+// chat: 200/429 通过（429 说明模型存在仅被限流）；mm: 只认 200（保守）
+// search: qwen 用 enable_search 顶层参数（200 即支持——网关对个别模型静默忽略，UI 提示误标）；
+//         kimi 用内置 $web_search 工具；豆包/DeepSeek 用通用 function 工具，均须模型实际返回 tool_calls
+function probeModel(provider, apiKey, model, kind, pngB64) {
   const ep = providerEndpoints(provider);
-  const content = withImage
-    ? [{ type: 'text', text: '描述这张图片' },
-       { type: 'image_url', image_url: { url: `data:image/png;base64,${pngB64}` } }]
-    : 'hi';
-  const body = JSON.stringify({ model, messages: [{ role: 'user', content }], max_tokens: 1 });
+  let body;
+  if (kind === 'mm') {
+    body = JSON.stringify({ model, messages: [{ role: 'user', content: [{ type: 'text', text: '描述这张图片' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${pngB64}` } }] }], max_tokens: 1 });
+  } else if (kind === 'search') {
+    if (provider.id === 'qwen') {
+      body = JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], enable_search: true, max_tokens: 1 });
+    } else if (provider.id === 'kimi') {
+      body = JSON.stringify({ model, messages: [{ role: 'user', content: '请联网搜索今天的重要新闻' }], tools: [{ type: 'builtin_function', function: { name: '$web_search' } }], max_tokens: 100 });
+    } else {
+      body = JSON.stringify({ model, messages: [{ role: 'user', content: '请联网搜索今天的重要新闻' }], tools: [{ type: 'function', function: { name: 'web_search', description: '搜索互联网获取实时信息', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } }], max_tokens: 100 });
+    }
+  } else {
+    body = JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 });
+  }
   return new Promise((resolve) => {
     const req = https.request({ hostname: ep.hostname, path: ep.chatPath, method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
-      res.resume();
-      res.on('end', () => resolve(res.statusCode === 200 || (!withImage && res.statusCode === 429)));
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        let ok = res.statusCode === 200;
+        if (kind === 'chat') ok = ok || res.statusCode === 429;
+        if (kind === 'search' && provider.id !== 'qwen') {
+          // 非 qwen: 须模型实际返回工具调用才算支持
+          try { ok = ok && !!(JSON.parse(data).choices?.[0]?.message?.tool_calls || []).length; } catch { ok = false; }
+        }
+        resolve(ok);
+      });
     });
     req.on('error', () => resolve(false));
     req.setTimeout(15000, () => { req.destroy(); resolve(false); });
@@ -445,9 +463,9 @@ function probeModel(provider, apiKey, model, withImage, pngB64) {
   });
 }
 
-// 并发批量探测，onProgress(done, total) 回调
-async function probeModelsBatch(provider, apiKey, modelIds, withImage, onProgress, concurrency = 8) {
-  const png = withImage ? solidPng(200, 30, 30) : null;
+// 并发批量探测，onProgress(done, total) 回调；kind: 'chat' | 'mm' | 'search'
+async function probeModelsBatch(provider, apiKey, modelIds, kind, onProgress, concurrency = 8) {
+  const png = kind === 'mm' ? solidPng(200, 30, 30) : null;
   const results = [];
   let idx = 0, done = 0;
   async function worker() {
@@ -455,7 +473,7 @@ async function probeModelsBatch(provider, apiKey, modelIds, withImage, onProgres
       const i = idx++;
       if (i >= modelIds.length) break;
       const id = modelIds[i];
-      const ok = await probeModel(provider, apiKey, id, withImage, png);
+      const ok = await probeModel(provider, apiKey, id, kind, png);
       results.push({ id, ok });
       done++;
       if (onProgress) onProgress(done, modelIds.length);
@@ -470,7 +488,7 @@ async function probeModelsBatch(provider, apiKey, modelIds, withImage, onProgres
 // onEvent: {type:'thinking',text} | {type:'content',text} | {type:'think-done',seconds}
 //          | {type:'done',usage} | {type:'error',message}
 // deepThink: 'off' | 'low' | 'high' | 'max'
-function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, onEvent }) {
+function aiChatStream({ provider, apiKey, model, messages, deepThink, webSearch, signal, onEvent }) {
   const ep = providerEndpoints(provider);
   const body = JSON.stringify({
     model,
@@ -480,6 +498,8 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, signal, on
     ...(deepThink && deepThink !== 'off'
       ? { thinking: { type: 'enabled' }, reasoning_effort: deepThink }
       : { thinking: { type: 'disabled' } }),
+    // 千问联网搜索（v2.4.0-Beta）
+    ...(webSearch ? { enable_search: true } : {}),
   });
 
   const startTime = Date.now();
@@ -736,7 +756,7 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
     const sender = event.sender;
     // 阶段1: 文本探测——列表含未开通/无权限模型（实测: 豆包 23 个候选仅 1 个已开通，
     // 千问也有大量未开通返回 400/403），只保留真正能对话的
-    const chatResults = await probeModelsBatch(providerCfg, key, ids, false, (done, total) => {
+    const chatResults = await probeModelsBatch(providerCfg, key, ids, 'chat', (done, total) => {
       if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'chat', done, total });
     });
     const chatOkIds = chatResults.filter(r => r.ok).map(r => r.id);
@@ -744,12 +764,18 @@ ipcMain.handle('ai-models', async (event, { provider, apiKey } = {}) => {
       return { ok: false, error: '没有可对话的模型（模型可能未在控制台开通，或 API Key 无权限）' };
     }
     // 阶段2: 图像探测——在可对话模型中标注多模态
-    const mmResults = await probeModelsBatch(providerCfg, key, chatOkIds, true, (done, total) => {
+    const mmResults = await probeModelsBatch(providerCfg, key, chatOkIds, 'mm', (done, total) => {
       if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'multimodal', done, total });
     });
+    // 阶段3: 联网探测——在可对话模型中标注联网搜索能力（v2.4.0；qwen 用 enable_search，
+    // 其他家用工具调用探测；开关仅对 qwen 开放，探测结果先全部保存）
+    const wsResults = await probeModelsBatch(providerCfg, key, chatOkIds, 'search', (done, total) => {
+      if (!sender.isDestroyed()) sender.send('ai-models-progress', { phase: 'search', done, total });
+    });
+    const wsOkIds = new Set(wsResults.filter(r => r.ok).map(r => r.id));
     // 按字典序返回（不区分大小写）
     const models = mmResults
-      .map(r => ({ id: r.id, multimodal: r.ok, retiring: retiringSet.has(r.id) }))
+      .map(r => ({ id: r.id, multimodal: r.ok, webSearch: wsOkIds.has(r.id), retiring: retiringSet.has(r.id) }))
       .sort((a, b) => a.id.localeCompare(b.id, 'en', { sensitivity: 'base' }));
     // 探测成功即写入磁盘缓存，下次切换提供商直接读缓存（v2.3.1）
     saveModelsCache(prov, models);
@@ -782,6 +808,8 @@ ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
     model: ai.model,
     messages,
     deepThink: ai.deepThink || 'high',
+    // 联网搜索（v2.4.0-Beta）: 仅 qwen + 开关开启 + 探测支持联网的模型，请求加 enable_search
+    webSearch: prov === 'qwen' && ai.webSearchEnabled === true && !!(ai.webSearchMap || {})[prov]?.[ai.model],
     signal: ac.signal,
     onEvent: emit,
   });

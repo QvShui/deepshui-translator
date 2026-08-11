@@ -212,6 +212,7 @@
   const setAiAsk = document.getElementById('set-ai-ask');
   const setAiIsolate = document.getElementById('set-ai-isolate');
   const setAiMm = document.getElementById('set-ai-multimodal');
+  const setAiWebSearch = document.getElementById('set-ai-websearch');  // 联网搜索-Beta 开关（v2.4.0，仅千问）
   const aiSettingsStatus = document.getElementById('ai-settings-status');
   const btnAiTest = document.getElementById('btn-ai-test');
   const btnSettingsSaveAi = document.getElementById('btn-settings-save-ai');
@@ -583,6 +584,8 @@
     if (!isCurrentModelMultimodal() && imageSelectMode) exitImageSelectMode();
     // 设置面板：多模态开关行仅当前模型本身支持多模态时显示（v2.3.6 修 bug1）
     updateMultimodalRow();
+    // 设置面板：联网搜索开关行仅千问 + 模型支持联网时显示（v2.4.0）
+    updateWebSearchRow();
   }
 
   // 模型本身是否支持多模态（只看探测表，不受开关状态影响）
@@ -597,6 +600,19 @@
   function updateMultimodalRow() {
     const row = document.getElementById('row-ai-mm');
     if (row) row.classList.toggle('hidden', !modelSupportsMultimodal());
+  }
+
+  // 联网搜索-Beta 开关行（v2.4.0）：仅千问提供商 + 当前模型探测支持联网时才显示，
+  // 其他提供商即使探测到支持也不显示开关（功能未开放）
+  function updateWebSearchRow() {
+    const row = document.getElementById('row-ai-ws');
+    if (!row) return;
+    const ai = currentConfig.ai || {};
+    const prov = setAiProvider.value || ai.provider || 'deepseek';
+    const model = setAiModel.value || ai.model || '';
+    const wsMap = ((ai.webSearchMap || {})[prov] || {});
+    const show = prov === 'qwen' && !!model && !!wsMap[model];
+    row.classList.toggle('hidden', !show);
   }
 
   // 选图按钮仅当前模型可用多模态时显示
@@ -614,6 +630,7 @@
     setAiAsk.checked = ai.showAsk !== false;
     setAiIsolate.checked = ai.isolateContext !== false;
     setAiMm.checked = ai.multimodalEnabled !== false;
+    setAiWebSearch.checked = ai.webSearchEnabled === true;
     updateAiKeyPlaceholder(ai.provider || 'deepseek');
     // 总结页数范围回填（内存态，clamp 到 PDF 实际页数/多模态上限）
     const rc = clampSummaryRange(summaryRange.start, summaryRange.end, false);
@@ -649,29 +666,36 @@
 
   // 用模型数组填充下拉框 + 保存多模态表到配置（拉取结果和缓存共用，v2.3.1）
   async function applyModelList(models) {
+    const prov = setAiProvider.value;
     setAiModel.innerHTML = '';
     const multimodalMap = {};
     for (const m of models) {
       const opt = document.createElement('option');
       opt.value = m.id;
-      // Retiring 模型标注警告（官方下线中但可能仍可用）；多模态标注 ✅，value 保持纯模型名
+      // Retiring 模型标注警告（官方下线中但可能仍可用）；多模态标注 ✅；联网标注仅千问（v2.4.0）
       let label = m.id;
       if (m.retiring) label += ' ⚠️Retiring';
       if (m.multimodal) label += ' (多模态✅)';
+      if (m.webSearch && prov === 'qwen') label += ' (联网✅)';
       opt.textContent = label;
       setAiModel.appendChild(opt);
       if (m.multimodal) multimodalMap[m.id] = true;
     }
     setAiModel.disabled = false;
-    // 保存多模态表到配置（选图按钮/多模态总结判断用）
+    // 保存多模态表 + 联网表到配置（选图按钮/多模态总结/联网开关判断用）
+    // 联网表按提供商嵌套存储，避免刷新其他提供商时覆盖千问的探测结果（v2.4.0）
     try {
       const cfg = await window.deepshui.getConfig();
-      cfg.ai = { ...(cfg.ai || {}), multimodalMap };
+      const webSearchMap = { ...((cfg.ai || {}).webSearchMap || {}) };
+      webSearchMap[prov] = {};
+      for (const m of models) if (m.webSearch) webSearchMap[prov][m.id] = true;
+      cfg.ai = { ...(cfg.ai || {}), multimodalMap, webSearchMap };
       await window.deepshui.saveConfig(cfg);
       currentConfig = cfg;
     } catch (e) { /* 保存失败不影响模型列表 */ }
     updateImageBtnVisibility();  // multimodalMap 更新后刷新选图按钮
     updateMultimodalRow();       // 模型列表更新后刷新多模态开关行可见性（v2.3.6）
+    updateWebSearchRow();        // 联网开关行可见性（v2.4.0）
     rebuildModelSwitch();        // 模型列表变化后同步顶部快速切换下拉（v2.3.3）
   }
 
@@ -725,8 +749,10 @@
       if (prevModel && [...setAiModel.options].some(o => o.value === prevModel)) {
         setAiModel.value = prevModel;
       }
+      updateWebSearchRow();  // 恢复选中后刷新联网开关行（v2.4.0）
       const mmCount = res.models.filter(m => m.multimodal).length;
-      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个支持多模态，已缓存到本地。部分模型可能被误标为支持多模态，请注意甄别`;
+      const wsCount = res.models.filter(m => m.webSearch).length;
+      aiSettingsStatus.textContent = `✅ ${res.models.length} 个可对话模型，其中 ${mmCount} 个多模态、${wsCount} 个支持联网搜索，已缓存到本地。部分模型可能被误标，请注意甄别`;
       aiSettingsStatus.className = 'ok';
     } else {
       // 拉取失败时回退到磁盘缓存（如网络波动），保留可用列表
@@ -1210,6 +1236,7 @@
     // AI 字段回填
     fillAiForm(config.ai || {});
     updateMultimodalRow();  // 打开设置时同步多模态开关行可见性（v2.3.6）
+    updateWebSearchRow();   // 打开设置时同步联网开关行可见性（v2.4.0）
 
     settingsStatus.textContent = '';
     settingsStatus.className = '';
@@ -1382,6 +1409,7 @@
         showAsk: setAiAsk.checked,
         isolateContext: setAiIsolate.checked,
         multimodalEnabled: setAiMm.checked,
+        webSearchEnabled: setAiWebSearch.checked,
       },
     };
     await window.deepshui.saveConfig(cfg);
@@ -1434,6 +1462,7 @@
         showAsk: setAiAsk.checked,
         isolateContext: setAiIsolate.checked,
         multimodalEnabled: setAiMm.checked,
+        webSearchEnabled: setAiWebSearch.checked,
       },
     };
     await window.deepshui.saveConfig(cfg);
@@ -1457,7 +1486,8 @@
       setAiExplain.checked !== (ai.showExplain !== false) ||
       setAiAsk.checked !== (ai.showAsk !== false) ||
       setAiIsolate.checked !== (ai.isolateContext !== false) ||
-      setAiMm.checked !== (ai.multimodalEnabled !== false);
+      setAiMm.checked !== (ai.multimodalEnabled !== false) ||
+      setAiWebSearch.checked !== (ai.webSearchEnabled === true);
     // 翻译引擎表单（手动保存）
     const engineChanged =
       setEngine.value !== (currentConfig.engine || 'youdao') ||
@@ -1581,7 +1611,7 @@
     if (!bar || !text) return;
     const pct = Math.round(done / total * 100);
     bar.style.width = pct + '%';
-    const label = phase === 'chat' ? '正在验证模型可用性' : '正在检测多模态';
+    const label = phase === 'chat' ? '正在验证模型可用性' : phase === 'multimodal' ? '正在检测多模态' : '正在检测联网搜索';
     text.textContent = `${label} ${done}/${total} (${pct}%)`;
   });
 
