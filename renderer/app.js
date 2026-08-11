@@ -7,7 +7,7 @@
   'use strict';
 
   // 引擎凭证字段定义（设置面板动态表单）
-  // 翻译服务选项（v2.4.0-beta.2）: 百度有领域翻译（不含 novel），其他引擎仅通用文本
+  // 翻译服务选项（v2.4.0）: 百度有领域翻译（不含 novel），其他引擎仅通用文本
   const TRANSLATE_SERVICES = {
     general: [{ value: '', label: '通用文本' }],
     baidu: [
@@ -72,7 +72,7 @@
   const btnSettings = document.getElementById('btn-settings');
   const targetLang = document.getElementById('target-lang');
   const engineSelect = document.getElementById('engine-select');
-  const translateService = document.getElementById('translate-service');  // 翻译栏「翻译服务」下拉（v2.4.0-beta.2）
+  const translateService = document.getElementById('translate-service');  // 翻译栏「翻译服务」下拉（v2.4.0）
   const aiModelSwitch = document.getElementById('ai-model-switch');  // 顶部快速切换 AI 模型（v2.3.3）
 
   // 侧边栏
@@ -887,7 +887,7 @@
     return cred;
   }
 
-  // 翻译栏「翻译服务」下拉（v2.4.0-beta.2）: 随引擎切换选项，回填已保存服务
+  // 翻译栏「翻译服务」下拉（v2.4.0）: 随引擎切换选项，回填已保存服务
   function renderTranslateService() {
     const engine = engineSelect.value;
     const opts = TRANSLATE_SERVICES[engine] || TRANSLATE_SERVICES.general;
@@ -1815,7 +1815,7 @@
     renderTranslateService();
   });
 
-  // 侧边栏切换翻译服务 → 保存到当前引擎配置（v2.4.0-beta.2）
+  // 侧边栏切换翻译服务 → 保存到当前引擎配置（v2.4.0）
   translateService.addEventListener('change', async () => {
     const engine = engineSelect.value;
     const cfg = await window.deepshui.getConfig();

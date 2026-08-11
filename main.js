@@ -187,7 +187,7 @@ function youdaoError(code) {
 }
 
 // ── 百度翻译 ─────────────────────────────────────────────
-// 翻译服务（v2.4.0-beta.2）: cred.service 为空=通用文本(/api/trans/vip/translate);
+// 翻译服务（v2.4.0）: cred.service 为空=通用文本(/api/trans/vip/translate);
 // 有值=领域文本(/api/trans/vip/fieldtranslate，签名含 domain)，失败自动回落通用
 async function translateBaidu(text, from, to, cred) {
   const { service } = cred;
