@@ -687,8 +687,12 @@
     try {
       const cfg = await window.deepshui.getConfig();
       const webSearchMap = { ...((cfg.ai || {}).webSearchMap || {}) };
-      webSearchMap[prov] = {};
-      for (const m of models) if (m.webSearch) webSearchMap[prov][m.id] = true;
+      // 旧缓存(2.3.5 及以前，models 无 webSearch 字段)不重建联网表——否则会覆盖清空
+      // 磁盘上已有的探测结果，导致联网开关消失（v2.4.0-beta.1 修复）
+      if (models.some(m => m.webSearch !== undefined)) {
+        webSearchMap[prov] = {};
+        for (const m of models) if (m.webSearch) webSearchMap[prov][m.id] = true;
+      }
       cfg.ai = { ...(cfg.ai || {}), multimodalMap, webSearchMap };
       await window.deepshui.saveConfig(cfg);
       currentConfig = cfg;
@@ -714,6 +718,7 @@
     if (desired && [...setAiModel.options].some(o => o.value === desired)) {
       setAiModel.value = desired;
     }
+    updateWebSearchRow();  // 恢复选中后刷新联网开关行（v2.4.0-beta.1 修复）
     return { models: res.models, savedAt: res.savedAt };
   }
 
