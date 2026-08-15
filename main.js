@@ -12,6 +12,7 @@ const zlib = require('zlib');
 
 // 配置文件: ~/.config/deepshui-translator/config.json (Linux)
 const DEFAULT_CONFIG = () => ({
+  licenseAccepted: false,  // 首次启动许可协议（v2.4.1）：未同意时先弹许可窗口
   engine: 'youdao',
   targetLang: 'zh-CN',
   youdao: { appKey: '', appSecret: '' },
@@ -84,6 +85,22 @@ function saveConfig(cfg) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
   return loadConfig();
+}
+
+// ── 许可协议（v2.4.1）──────────────────────────────────────
+// 首次启动（或卸载重装后）需用户勾选同意 MIT 许可协议才能进入主界面；
+// 同意状态持久化在 config.json 的 licenseAccepted 字段。
+function isLicenseAccepted() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(getConfigPath(), 'utf8'));
+    return cfg.licenseAccepted === true;
+  } catch { return false; }
+}
+
+function acceptLicense() {
+  const cfg = loadConfig();
+  cfg.licenseAccepted = true;
+  return saveConfig(cfg);
 }
 
 // ── 模型列表磁盘缓存（v2.3.1）──────────────────────────────
@@ -654,6 +671,34 @@ function aiChatStream({ provider, apiKey, model, messages, deepThink, webSearch,
 // ── 窗口管理 ─────────────────────────────────────────────
 let mainWindow = null;
 
+// ── 许可协议窗口（v2.4.1，首次启动）─────────────────────
+let licenseWindow = null;
+let licenseAcceptedThisRun = false;  // 点「接受」后置位，关闭窗口时不再触发退出
+
+function showLicenseWindow() {
+  if (licenseWindow) { licenseWindow.focus(); return; }
+  licenseWindow = new BrowserWindow({
+    width: 780,
+    height: 700,
+    minWidth: 600,
+    minHeight: 480,
+    title: 'deepshui-translator — 许可协议',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  licenseWindow.setMenu(null);  // 许可窗口不需要菜单
+  licenseWindow.loadFile(path.join(__dirname, 'renderer', 'license.html'));
+  licenseWindow.on('closed', () => {
+    licenseWindow = null;
+    // 未点「接受」就关闭窗口（含右上角 ✕）视为拒绝 → 退出程序
+    if (!licenseAcceptedThisRun) app.quit();
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -755,6 +800,26 @@ ipcMain.handle('get-config', async () => {
 
 ipcMain.handle('save-config', async (event, cfg) => {
   return saveConfig(cfg);
+});
+
+// ── 许可协议 IPC（v2.4.1）────────────────────────────────
+// 获取应用版本号（许可窗口标题显示）
+ipcMain.handle('get-app-version', async () => app.getVersion());
+
+// 勾选同意 → 持久化，先打开主界面再关闭许可窗口（避免瞬间无窗口触发退出）
+ipcMain.handle('license-accept', async () => {
+  acceptLicense();
+  licenseAcceptedThisRun = true;
+  if (!mainWindow) createWindow();
+  const win = licenseWindow;
+  if (win && !win.isDestroyed()) win.close();
+  return true;
+});
+
+// 点「退出」→ 直接退出程序
+ipcMain.handle('license-decline', async () => {
+  app.quit();
+  return true;
 });
 
 // ── AI 引擎 IPC ──────────────────────────────────────────
@@ -878,10 +943,15 @@ ipcMain.handle('ai-cancel', async (event, requestId) => {
 // ── 启动 ─────────────────────────────────────────────────
 app.whenReady().then(() => {
   buildMenu();
-  createWindow();
+  // v2.4.1: 首次启动未同意许可协议时，先显示许可窗口；同意后才进入主界面
+  if (isLicenseAccepted()) createWindow();
+  else showLicenseWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      if (isLicenseAccepted()) createWindow();
+      else showLicenseWindow();
+    }
   });
 });
 

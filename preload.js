@@ -38,4 +38,9 @@ contextBridge.exposeInMainWorld('deepshui', {
   onOpenPdf: (callback) => {
     ipcRenderer.on('open-pdf', (event, filePath) => callback(filePath));
   },
+
+  // 许可协议（v2.4.1 首次启动）
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  licenseAccept: () => ipcRenderer.invoke('license-accept'),
+  licenseDecline: () => ipcRenderer.invoke('license-decline'),
 });

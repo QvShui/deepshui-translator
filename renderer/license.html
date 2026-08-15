@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'">
+  <title>deepshui-translator — 许可协议</title>
+  <style>
+    :root {
+      --bg: #f5f6f8;
+      --bg-toolbar: #2b2f36;
+      --bg-accent: #3b82f6;
+      --text-main: #1f2937;
+      --text-dim: #6b7280;
+      --border: #e5e7eb;
+      --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      font-family: "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      color: var(--text-main);
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    body { display: flex; flex-direction: column; }
+
+    /* ── 顶部标题栏 ─────────────────────────── */
+    #license-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 44px;
+      padding: 0 14px;
+      background: var(--bg-toolbar);
+      color: #fff;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    #license-header .title { font-size: 14px; font-weight: 600; }
+    #license-header .version { font-size: 12px; color: #9ca3af; margin-left: auto; }
+
+    /* ── 协议正文（可滚动）──────────────────── */
+    #license-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    #license-card {
+      max-width: 860px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 22px 26px;
+    }
+
+    .license-pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-main);
+    }
+
+    .license-zh p {
+      margin-bottom: 12px;
+      font-size: 13.5px;
+      line-height: 1.9;
+    }
+    .license-zh p:last-child { margin-bottom: 0; }
+
+    .license-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 20px 0;
+    }
+
+    /* ── 底部：勾选项 + 按钮 ────────────────── */
+    #license-footer {
+      flex-shrink: 0;
+      background: #fff;
+      border-top: 1px solid var(--border);
+      padding: 12px 20px;
+    }
+
+    #license-agree-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 860px;
+      margin: 0 auto 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+    #license-agree-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--bg-accent);
+      cursor: pointer;
+    }
+    #license-agree-row span { font-size: 13.5px; }
+
+    #license-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    #license-actions button {
+      min-width: 96px;
+      padding: 8px 22px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text-main);
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    #btn-license-decline:hover { background: #f3f4f6; }
+
+    #btn-license-accept {
+      background: var(--bg-accent);
+      border-color: var(--bg-accent);
+      color: #fff;
+    }
+    #btn-license-accept:hover:not(:disabled) { background: #2f6fe0; }
+    #btn-license-accept:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div id="license-header">
+    <span class="title">📜 许可协议 · License Agreement</span>
+    <span class="version" id="license-version"></span>
+  </div>
+
+  <div id="license-scroll">
+    <div id="license-card">
+      <!-- 英文原文 -->
+      <div class="license-pre">MIT License
+
+Copyright (c) 2026 QvShui
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</div>
+
+      <hr class="license-divider">
+
+      <!-- 中文译文 -->
+      <div class="license-zh">
+        <p><strong>MIT 许可证</strong><br>版权所有 (c) 2026 去水</p>
+        <p>特此免费授予获得本软件及相关文档文件（以下简称"本软件"）副本的任何人，不受限制地处理本软件的权利，包括但不限于使用、复制、修改、合并、发布、分发、再许可及/或出售本软件副本的权利，并允许接受本软件的人为此目的而行使前述权利，但须符合以下条件：</p>
+        <p>上述版权声明和本许可声明应包含在本软件的所有副本或重要部分中。</p>
+        <p>本软件按"原样"提供，不附有任何形式的明示或暗示的保证，包括但不限于对适销性、特定用途适用性和非侵权性的保证。在任何情况下，作者或版权持有人均不对任何索赔、损害或其他责任承担责任，无论是在合同、侵权或其他诉讼中产生的，还是与本软件或本软件的使用或其他交易有关的。</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="license-footer">
+    <label id="license-agree-row">
+      <input type="checkbox" id="license-agree">
+      <span>我已阅读并同意以上内容</span>
+    </label>
+    <div id="license-actions">
+      <button id="btn-license-decline">退出</button>
+      <button id="btn-license-accept" disabled>接受</button>
+    </div>
+  </div>
+
+  <script src="license.js"></script>
+</body>
+</html>
