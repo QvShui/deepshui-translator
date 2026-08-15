@@ -13,6 +13,7 @@
 - 🌐 多翻译引擎：有道 / 百度 / 讯飞 / DeepL / Google Cloud（英⇄中，支持日/韩/法/德）
 - 🚫 目标语言可选「不翻译」（纯 AI 阅读模式）
 - 📋 一键复制译文
+- 📜 首次启动显示许可协议（v2.4.1，MIT 中英双语，同意后进入）
 
 ### AI 引擎（DeepSeek / 千问 / 豆包 / Kimi）
 - 🤖 **AI 解释**：划词自动解释段落（核心意思 / 关键术语 / 背景知识）
@@ -114,6 +115,8 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 │   ├── index.html       # 主界面
 │   ├── style.css
 │   ├── app.js           # 划词翻译、AI 解释/问答、设置面板
+│   ├── license.html     # 首次启动许可协议窗口（v2.4.1）
+│   ├── license.js
 │   ├── pdf-viewer.js    # PDF.js 阅读器（虚拟滚动按需渲染）
 │   ├── pdfjs/           # PDF.js 本地库
 │   └── lib/             # marked / KaTeX / DOMPurify（Markdown+公式渲染）
@@ -124,6 +127,8 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 ## 📜 开源协议
 
 [MIT License](./LICENSE)
+
+> 自 v2.4.1 起，首次启动会显示许可协议窗口（MIT 中英双语）：勾选「我已阅读并同意以上内容」并点击「接受」后进入主界面；点击「退出」或直接关闭窗口则退出程序。卸载重装后需重新同意。
 
 ---
 
