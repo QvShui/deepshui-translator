@@ -209,17 +209,18 @@ function youdaoError(code) {
 async function translateBaidu(text, from, to, cred) {
   const { service } = cred;
   if (service) {
-    const errMsg = await translateBaiduField(text, from, to, cred);
-    if (!errMsg) return { ok: true, text: translateBaiduField._last };
+    const field = await translateBaiduField(text, from, to, cred);
+    if (field.ok) return { ok: true, text: field.text };
     // 领域失败 → 回落通用文本
     const fallback = await translateBaiduGeneral(text, from, to, cred);
     if (fallback.ok) return fallback;
-    return { ok: false, error: `${errMsg}；回落通用也失败: ${fallback.error}` };
+    return { ok: false, error: `${field.error}；回落通用也失败: ${fallback.error}` };
   }
   return translateBaiduGeneral(text, from, to, cred);
 }
 
-// 领域文本翻译：成功返回 null 并置 _last 译文；失败返回错误信息
+// 领域文本翻译：成功返回 { ok:true, text }；失败返回 { ok:false, error }
+// (v2.4.2 修复: 不再用共享函数属性 _last 回传译文，避免并发请求互相覆盖)
 async function translateBaiduField(text, from, to, cred) {
   const { appid, secretKey, service } = cred;
   const salt = String(Date.now());
@@ -240,12 +241,12 @@ async function translateBaiduField(text, from, to, cred) {
     }, params.toString());
     const parsed = JSON.parse(res.data);
     if (parsed.error_code === '0' || (!parsed.error_code && parsed.trans_result)) {
-      translateBaiduField._last = (parsed.trans_result || []).map(t => t.dst).join('\n');
-      return null;
+      const text = (parsed.trans_result || []).map(t => t.dst).join('\n');
+      return { ok: true, text };
     }
-    return `百度领域错误码 ${parsed.error_code} (${parsed.error_msg || '未知错误'})`;
+    return { ok: false, error: `百度领域错误码 ${parsed.error_code} (${parsed.error_msg || '未知错误'})` };
   } catch (e) {
-    return `百度领域翻译网络错误: ${e.message}`;
+    return { ok: false, error: `百度领域翻译网络错误: ${e.message}` };
   }
 }
 
@@ -748,16 +749,27 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function openPdfDialog() {
-  dialog.showOpenDialog(mainWindow, {
+// 打开 PDF：由主进程读文件并把内容直接下发给渲染层，渲染层不再经 IPC 传任意路径读文件
+// (v2.4.2 修复: 删除可读任意文件的 read-file IPC，消除任意文件读取攻击面)
+async function openPdfDialog() {
+  const result = await dialog.showOpenDialog(mainWindow, {
     title: '打开 PDF 文件',
     filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
     properties: ['openFile'],
-  }).then(result => {
-    if (!result.canceled && result.filePaths.length > 0) {
-      mainWindow.webContents.send('open-pdf', result.filePaths[0]);
-    }
   });
+  const p = (result.canceled || result.filePaths.length === 0) ? null : result.filePaths[0];
+  if (!p) return;
+  const payload = { ok: true, name: path.basename(p), data: null, error: null };
+  try {
+    const buf = await fs.promises.readFile(p);
+    payload.data = buf.toString('base64');
+  } catch (e) {
+    payload.ok = false;
+    payload.error = e.message;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('open-pdf', payload);
+  }
 }
 
 // ── IPC 处理 ─────────────────────────────────────────────
@@ -783,15 +795,6 @@ ipcMain.handle('translate', async (event, { text, from, to, engine }) => {
 ipcMain.handle('open-pdf-dialog', async () => {
   openPdfDialog();
   return true;
-});
-
-ipcMain.handle('read-file', async (event, filePath) => {
-  try {
-    const data = fs.readFileSync(filePath);
-    return { ok: true, data: data.toString('base64'), name: path.basename(filePath) };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
 });
 
 ipcMain.handle('get-config', async () => {
@@ -906,6 +909,9 @@ ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
   if (!ai.model) return { ok: false, error: '未选择模型，请到 设置 → AI 引擎 拉取并选择模型' };
 
   const sender = event.sender;
+  // v2.4.2: requestId 冲突时先中止旧流，避免旧流继续以同一 id 推送污染新请求
+  const prev = aiAborters.get(requestId);
+  if (prev) { try { prev.abort(); } catch { /* 忽略 */ } }
   const ac = new AbortController();
   aiAborters.set(requestId, ac);
 
@@ -925,10 +931,10 @@ ipcMain.handle('ai-chat', async (event, { requestId, messages, kind }) => {
     onEvent: emit,
   });
 
-  // 请求结束时清理
+  // 请求结束时清理（v2.4.2: 兜底超时对齐 socket 超时 180s，避免长流在 90-180s 间无法取消）
   const cleanup = () => aiAborters.delete(requestId);
   ac.signal.addEventListener('abort', cleanup, { once: true });
-  setTimeout(cleanup, 90000); // 兜底清理
+  setTimeout(cleanup, 180000);
 
   return { ok: true, requestId };
 });

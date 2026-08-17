@@ -100,7 +100,14 @@
   // ── 状态 ─────────────────────────────────
   let currentConfig = {};
   let translateTimer = null; // 防抖
+  let translateSeq = 0;      // 翻译请求序号：丢弃过期的在途翻译结果（v2.4.2）
   const fieldInputs = {};    // engine -> { key: inputEl }
+
+  // AI 是否已配置 key：优先读 providerKeys[当前提供商]，兼容旧 ai.apiKey 字段（v2.4.2）
+  function hasAiKey() {
+    const ai = currentConfig.ai || {};
+    return !!((ai.providerKeys && ai.providerKeys[ai.provider || 'deepseek']) || ai.apiKey);
+  }
 
   // AI 状态
   let aiExplainRunning = false;  // 解释请求进行中
@@ -113,6 +120,11 @@
   let aiExplainShares = false;   // 解释是否并入问答上下文
   let explainPendingText = '';   // 当前解释对应的段落（并入历史用）
   let askCurrentAnswer = '';     // 本轮问答累积的回答（避免历史重复累积）
+
+  // 每个 AI 请求的唯一 id（v2.4.2）：把流式事件精确路由到发起的那一轮，
+  // 让「取消/被替换」的旧流事件不再串到新一轮
+  let askReqSeq = 0, explainReqSeq = 0, testReqSeq = 0;
+  let currentAskRequestId = null, currentExplainRequestId = null, currentTestRequestId = null;
 
   // 确认框 DOM
   const confirmOverlay = document.getElementById('confirm-overlay');
@@ -271,7 +283,7 @@
       try {
         renderMathInElement(el, {
           delimiters: [
-            { left: '\\\\[', right: '\\\\]', display: true },
+            { left: '\\[', right: '\\]', display: true },
             { left: '\\\(', right: '\\\)', display: false },
             { left: '$$', right: '$$', display: true },
             { left: '$', right: '$', display: false },
@@ -336,9 +348,17 @@
 
   // ── AI 事件监听（主进程流式推送）─────────
   window.deepshui.onAiEvent(({ requestId, kind, type, text, seconds, usage, message }) => {
-    if (kind === 'explain') handleExplainEvent(type, text, seconds, usage, message);
-    else if (kind === 'ask') handleAskEvent(type, text, seconds, usage, message);
-    else if (kind === 'test') handleTestEvent(type, text, message);
+    // v2.4.2: 只处理当前活动请求的事件，被取消/替换的旧流事件直接丢弃
+    if (kind === 'explain') {
+      if (requestId !== currentExplainRequestId) return;
+      handleExplainEvent(type, text, seconds, usage, message);
+    } else if (kind === 'ask') {
+      if (requestId !== currentAskRequestId) return;
+      handleAskEvent(type, text, seconds, usage, message);
+    } else if (kind === 'test') {
+      if (requestId !== currentTestRequestId) return;
+      handleTestEvent(type, text, message);
+    }
   });
 
   // AI 测试事件（独立于解释区）
@@ -432,9 +452,11 @@
       ];
     }
     // 主进程拒绝请求（未配置 key/模型等）时恢复状态并提示，否则解释锁死无提示
+    const reqId = 'explain-' + (++explainReqSeq);
+    currentExplainRequestId = reqId;
     let res;
     try {
-      res = await window.deepshui.aiChat('explain', messages, 'explain');
+      res = await window.deepshui.aiChat(reqId, messages, 'explain');
     } catch (e) {
       res = { ok: false, error: e.message || '请求发送失败' };
     }
@@ -450,7 +472,7 @@
   // 打断 AI 解释（划线变化时调用）
   function cancelExplain() {
     if (aiExplainRunning) {
-      window.deepshui.aiCancel('explain');
+      window.deepshui.aiCancel(currentExplainRequestId);
       aiExplainRunning = false;
       aiExplainStatus.textContent = '';
       aiExplainStatus.className = 'ai-status';
@@ -563,9 +585,11 @@
 
     // 标记本轮进行中（handleAskEvent 据此防止 done/end 双重 finalize）
     askTurnActive = true;
+    const reqId = 'ask-' + (++askReqSeq);
+    currentAskRequestId = reqId;
     let res;
     try {
-      res = await window.deepshui.aiChat('ask', messages, 'ask');
+      res = await window.deepshui.aiChat(reqId, messages, 'ask');
     } catch (e) {
       res = { ok: false, error: e.message || '请求发送失败' };
     }
@@ -585,10 +609,14 @@
   // 打断问答（新提问时替换旧回答）
   function cancelAsk() {
     if (aiAskRunning) {
-      window.deepshui.aiCancel('ask');
+      window.deepshui.aiCancel(currentAskRequestId);
       aiAskRunning = false;
       askTurnActive = false;   // 防止后续 end 事件重复 finalize
       askCurrentAnswer = '';   //  cancelled 轮的回答不入历史（aiCancel 的 error 事件不含内容）
+      // v2.4.2: 去掉本轮未获回答的 user 消息，保持历史 [user, assistant] 交替结构
+      if (askHistory.length && askHistory[askHistory.length - 1].role === 'user') {
+        askHistory.pop();
+      }
       aiAskStatus.textContent = '';
       aiAskStatus.className = 'ai-status';
       aiAskSend.disabled = false;
@@ -821,7 +849,9 @@
     currentConfig = cfg;
     aiSettingsStatus.textContent = '测试中（需几秒）...';
     aiSettingsStatus.className = '';
-    const res = await window.deepshui.aiChat('test', [
+    const reqId = 'test-' + (++testReqSeq);
+    currentTestRequestId = reqId;
+    const res = await window.deepshui.aiChat(reqId, [
       { role: 'system', content: '你是一个乐于助人的 AI 助手。' },
       { role: 'user', content: '回复两个字：正常' },
     ], 'test');
@@ -935,14 +965,14 @@
     return window.deepshui.openPdfDialog();
   }
 
-  async function openPdfFile(filePath) {
-    const res = await window.deepshui.readFile(filePath);
-    if (!res.ok) {
-      alert('读取文件失败: ' + res.error);
+  async function openPdfFile(payload) {
+    // v2.4.2: 主进程直接下发 {ok,name,data,error}，渲染层不再经 IPC 读取任意文件
+    if (!payload || !payload.ok) {
+      alert('读取文件失败: ' + ((payload && payload.error) || '未知错误'));
       return;
     }
-    const bytes = Uint8Array.from(atob(res.data), c => c.charCodeAt(0));
-    await PdfViewer.loadPdf(bytes, res.name);
+    const bytes = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
+    await PdfViewer.loadPdf(bytes, payload.name);
     // handlePdfOpened 由 PdfViewer.onPdfLoaded 统一触发（含拖拽路径）
   }
 
@@ -951,6 +981,9 @@
     const keepSessions = !!(opts && opts.keepSessions);
     if (!keepSessions) sessionStore.clear();  // 真·新文档: 清空所有模型会话
     const myTurn = ++pdfOpenCounter;
+
+    // v2.4.2: 真·新文档先清空旧全文，早退路径（超页数/渲染失败/提取失败）不会残留上一份 PDF
+    if (!keepSessions) fullText = '';
 
     // 新文档: 页数输入框锁定实际页数(持久化); 清空已发送图片缓存
     clampSummaryInputsToDoc();
@@ -974,7 +1007,7 @@
     // 多模态模型：渲染页范围为网格图上传总结（不注入全文文本）
     // 多模态总开关关闭时走文本提取路径
     const isMultimodal = ai.multimodalEnabled !== false && !!(ai.model && (ai.multimodalMap || {})[ai.model]);
-    if (isMultimodal && ai.apiKey && ai.model && ai.showAsk) {
+    if (isMultimodal && hasAiKey() && ai.model && ai.showAsk) {
       aiAsk.classList.remove('hidden');
       // 图片体积大：限制单次总结最多 16 页（4 页/张 × 4 张），超出提示缩小范围
       const MM_MAX_PAGES = 16;
@@ -1051,7 +1084,7 @@
       }
 
       // 自动总结（AI 已配置 + 问答显示开启）——全文只放 system，避免双重注入
-      if (ai.apiKey && ai.model && ai.showAsk) {
+      if (hasAiKey() && ai.model && ai.showAsk) {
         aiAsk.classList.remove('hidden');
         sendAsk('请阅读并理解上面的文章，然后用中文总结这篇文章的核心内容，之后我会继续向你提问。', true);
       }
@@ -1204,9 +1237,13 @@
       cancelExplain();
     }
 
+    // v2.4.2: 新一次划词使在途的旧翻译结果失效；不翻译分支也清掉待发/在途请求
+    translateSeq++;
+
     // 目标语言为「不翻译」时跳过翻译流程
     const to = targetLang.value;
     if (to === 'none') {
+      clearTimeout(translateTimer);
       translatePlaceholder.classList.remove('hidden');
       translateResult.classList.add('hidden');
       translateLoading.classList.add('hidden');
@@ -1216,9 +1253,11 @@
       showLoading();
       clearTimeout(translateTimer);
       translateTimer = setTimeout(async () => {
+        const seq = translateSeq;
         const engine = engineSelect.value;
         const result = await window.deepshui.translate(text, 'auto', to, engine);
 
+        if (seq !== translateSeq) return; // 已有更新的请求，丢弃过期结果
         if (result.ok) {
           showResult(text, result.text, result.engine);
         } else {
@@ -1229,7 +1268,7 @@
 
     // AI 解释（若开启且已配置 key）
     const ai = currentConfig.ai || {};
-    if (ai.showExplain && ai.apiKey) {
+    if (ai.showExplain && hasAiKey()) {
       // 小防抖，避免连续划词频繁请求
       clearTimeout(aiExplainTimer);
       aiExplainTimer = setTimeout(() => {
@@ -1313,11 +1352,11 @@
       ...currentConfig,   // 保留 AI 及其它所有字段
       engine: setEngine.value,
       targetLang: setLang.value,
-      youdao: { ...currentConfig.youdao, ...(setEngine.value === 'youdao' ? collectCredentials('youdao') : {}) },
-      baidu: { ...currentConfig.baidu, ...(setEngine.value === 'baidu' ? collectCredentials('baidu') : {}) },
-      xunfei: { ...currentConfig.xunfei, ...(setEngine.value === 'xunfei' ? collectCredentials('xunfei') : {}) },
-      deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
-      google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
+      youdao: { ...currentConfig.youdao, ...collectCredentials('youdao') },
+      baidu: { ...currentConfig.baidu, ...collectCredentials('baidu') },
+      xunfei: { ...currentConfig.xunfei, ...collectCredentials('xunfei') },
+      deepl: { ...currentConfig.deepl, ...collectCredentials('deepl') },
+      google: { ...currentConfig.google, ...collectCredentials('google') },
     };
 
     // 仅当「翻译引擎」tab 激活时才校验翻译引擎凭证；AI tab 保存不受翻译引擎凭证限制
@@ -1503,11 +1542,11 @@
       ...currentConfig,
       engine: setEngine.value,
       targetLang: setLang.value,
-      youdao: { ...currentConfig.youdao, ...(setEngine.value === 'youdao' ? collectCredentials('youdao') : {}) },
-      baidu: { ...currentConfig.baidu, ...(setEngine.value === 'baidu' ? collectCredentials('baidu') : {}) },
-      xunfei: { ...currentConfig.xunfei, ...(setEngine.value === 'xunfei' ? collectCredentials('xunfei') : {}) },
-      deepl: { ...currentConfig.deepl, ...(setEngine.value === 'deepl' ? collectCredentials('deepl') : {}) },
-      google: { ...currentConfig.google, ...(setEngine.value === 'google' ? collectCredentials('google') : {}) },
+      youdao: { ...currentConfig.youdao, ...collectCredentials('youdao') },
+      baidu: { ...currentConfig.baidu, ...collectCredentials('baidu') },
+      xunfei: { ...currentConfig.xunfei, ...collectCredentials('xunfei') },
+      deepl: { ...currentConfig.deepl, ...collectCredentials('deepl') },
+      google: { ...currentConfig.google, ...collectCredentials('google') },
       ai: {
         ...currentConfig.ai,
         provider,
@@ -1550,16 +1589,19 @@
     const engineChanged =
       setEngine.value !== (currentConfig.engine || 'youdao') ||
       setLang.value !== (currentConfig.targetLang || 'zh-CN');
-    // 引擎凭证字段
+    // 引擎凭证字段（遍历所有已查看过的引擎，改动过的都算未保存）
     let credChanged = false;
-    const fields = ENGINE_FIELDS[setEngine.value] || [];
-    const savedCred = currentConfig[setEngine.value] || {};
-    for (const f of fields) {
-      const input = fieldInputs[setEngine.value]?.[f.key];
-      if (input && input.value.trim() !== (savedCred[f.key] || '')) {
-        credChanged = true;
-        break;
+    for (const engine of Object.keys(ENGINE_FIELDS)) {
+      const fields = ENGINE_FIELDS[engine] || [];
+      const savedCred = currentConfig[engine] || {};
+      for (const f of fields) {
+        const input = fieldInputs[engine]?.[f.key];
+        if (input && input.value.trim() !== (savedCred[f.key] || '')) {
+          credChanged = true;
+          break;
+        }
       }
+      if (credChanged) break;
     }
     return aiChanged || engineChanged || credChanged;
   }
@@ -1630,7 +1672,7 @@
   });
 
   // AI 表单改动即自动保存（深度思考/显示开关/多模态开关/模型/Key/提供商）
-  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk, setAiIsolate, setAiMm].forEach(el => {
+  [setAiProvider, setAiDeepThink, setAiExplain, setAiAsk, setAiIsolate, setAiMm, setAiWebSearch].forEach(el => {
     el.addEventListener('change', autoSaveAi);
   });
   setAiModel.addEventListener('change', autoSaveAi);
@@ -1728,7 +1770,7 @@
     aiAskSend.disabled = false;
 
     const ai = currentConfig.ai || {};
-    if (ai.apiKey && ai.model && ai.showAsk && isCurrentModelMultimodal() && PdfViewer.pageCount) {
+    if (hasAiKey() && ai.model && ai.showAsk && isCurrentModelMultimodal() && PdfViewer.pageCount) {
       // 多模态模型：重新渲染页范围图片并总结（直接读输入框当前值，避免配置保存竞态 v2.3.4）
       const MM_MAX_PAGES = 16;
       const start = Math.max(1, parseInt(aiSummaryStart.value) || 1);
@@ -1766,7 +1808,7 @@
       } else {
         aiAskContent.textContent = '⚠️ 页面渲染失败，请重试';
       }
-    } else if (ai.apiKey && ai.model && PdfViewer.pageCount) {
+    } else if (hasAiKey() && ai.model && PdfViewer.pageCount) {
       // 文本模型：按当前页数范围重新提取全文再总结（v2.3.5 修 bug1 文本路径——
       // 之前只重发指令，fullText 仍是打开 PDF 时按旧范围提取的）
       clearAiContent(aiAskContent);
@@ -1842,8 +1884,8 @@
   });
 
   // 主进程菜单触发打开
-  window.deepshui.onOpenPdf((filePath) => {
-    openPdfFile(filePath);
+  window.deepshui.onOpenPdf((payload) => {
+    openPdfFile(payload);
   });
 
   // Esc 关闭设置 / 退出选图模式

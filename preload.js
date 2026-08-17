@@ -13,9 +13,6 @@ contextBridge.exposeInMainWorld('deepshui', {
   // 打开 PDF 文件对话框
   openPdfDialog: () => ipcRenderer.invoke('open-pdf-dialog'),
 
-  // 读取文件（返回 base64）
-  readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
-
   // 获取有道配置
   getConfig: () => ipcRenderer.invoke('get-config'),
 

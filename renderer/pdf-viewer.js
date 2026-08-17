@@ -31,11 +31,16 @@ const PdfViewer = (() => {
   let totalHeight = 0;
   let spacer = null;           // 撑开滚动条的占位层
   const rendered = new Map();  // pageNum -> wrapper
+  const rendering = new Set(); // pageNum -> 正在渲染中（防止并发重复渲染同一页，v2.4.2）
 
   // 渲染队列（并发控制）
   let renderQueue = [];
   let activeRenders = 0;
   let scrollRaf = 0;           // 滚动节流
+
+  // 渲染代次（v2.4.2）：换文档/重排时自增，在途的旧渲染任务据此作废
+  let renderGeneration = 0;
+  let wheelZoomTimer = null;   // Ctrl+滚轮缩放的防抖计时器
 
   const viewerEl = document.getElementById('pdf-viewer');
   const zoomLabel = document.getElementById('zoom-label');
@@ -52,6 +57,8 @@ const PdfViewer = (() => {
   async function loadPdf(data, name) {
     if (isLoading) return;
     isLoading = true;
+    renderGeneration++;   // 使上一份文档的在途渲染全部作废
+    rendering.clear();
     try {
       pdfDoc = await pdfjsLib.getDocument({ data }).promise;
       fileName = name;
@@ -145,7 +152,7 @@ const PdfViewer = (() => {
   }
 
   function scheduleRender(pageNum) {
-    if (rendered.has(pageNum) || renderQueue.includes(pageNum)) return;
+    if (rendered.has(pageNum) || renderQueue.includes(pageNum) || rendering.has(pageNum)) return;
     renderQueue.push(pageNum);
     pumpQueue();
   }
@@ -161,68 +168,85 @@ const PdfViewer = (() => {
   }
 
   async function renderPage(pageNum) {
-    if (rendered.has(pageNum)) return;
-    const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale });
-    const dpr = window.devicePixelRatio || 1;
-    const top = pageOffsets[pageNum - 1];
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'page-wrapper';
-    wrapper.dataset.page = pageNum;
-    wrapper.style.position = 'absolute';
-    wrapper.style.top = top + 'px';
-    wrapper.style.left = '50%';
-    wrapper.style.transform = 'translateX(-50%)';
-    wrapper.style.width = viewport.width + 'px';
-    wrapper.style.height = viewport.height + 'px';
-
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(viewport.width * dpr);
-    canvas.height = Math.floor(viewport.height * dpr);
-    canvas.style.width = viewport.width + 'px';
-    canvas.style.height = viewport.height + 'px';
-    wrapper.appendChild(canvas);
-
-    // 渲染前先挂载（异步期间用户可能已滚走）
-    spacer.appendChild(wrapper);
-    rendered.set(pageNum, wrapper);
-
+    const gen = renderGeneration;
+    if (rendered.has(pageNum) || rendering.has(pageNum)) return;
+    rendering.add(pageNum);
     try {
-      const ctx = canvas.getContext('2d');
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      const page = await pdfDoc.getPage(pageNum);
+      if (gen !== renderGeneration) return;   // 文档/布局已切换，丢弃本次渲染
+      const viewport = page.getViewport({ scale });
+      const dpr = window.devicePixelRatio || 1;
+      const top = pageOffsets[pageNum - 1];
 
-      // 文本层：官方 renderTextLayer（自含 scaleX 行末校正、基线定位、旋转处理）
-      const textContent = await page.getTextContent();
-      const textLayer = document.createElement('div');
-      textLayer.className = 'textLayer';
-      // 官方依赖 --scale-factor CSS 变量做 calc() 定位
-      textLayer.style.setProperty('--scale-factor', viewport.scale);
-      wrapper.appendChild(textLayer);
+      const wrapper = document.createElement('div');
+      wrapper.className = 'page-wrapper';
+      wrapper.dataset.page = pageNum;
+      wrapper.style.position = 'absolute';
+      wrapper.style.top = top + 'px';
+      wrapper.style.left = '50%';
+      wrapper.style.transform = 'translateX(-50%)';
+      wrapper.style.width = viewport.width + 'px';
+      wrapper.style.height = viewport.height + 'px';
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = viewport.width + 'px';
+      canvas.style.height = viewport.height + 'px';
+      wrapper.appendChild(canvas);
+
+      // 渲染前先挂载（异步期间用户可能已滚走）
+      spacer.appendChild(wrapper);
+      rendered.set(pageNum, wrapper);
 
       try {
-        const task = pdfjsLib.renderTextLayer({
-          textContentSource: textContent,
-          container: textLayer,
-          viewport,
-          isOffscreenCanvasSupported: !!window.OffscreenCanvas,
-        });
-        await task.promise;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        if (gen !== renderGeneration) {
+          wrapper.remove();
+          if (rendered.get(pageNum) === wrapper) rendered.delete(pageNum);
+          return;
+        }
+
+        // 文本层：官方 renderTextLayer（自含 scaleX 行末校正、基线定位、旋转处理）
+        const textContent = await page.getTextContent();
+        if (gen !== renderGeneration) {
+          wrapper.remove();
+          if (rendered.get(pageNum) === wrapper) rendered.delete(pageNum);
+          return;
+        }
+        const textLayer = document.createElement('div');
+        textLayer.className = 'textLayer';
+        // 官方依赖 --scale-factor CSS 变量做 calc() 定位
+        textLayer.style.setProperty('--scale-factor', viewport.scale);
+        wrapper.appendChild(textLayer);
+
+        try {
+          const task = pdfjsLib.renderTextLayer({
+            textContentSource: textContent,
+            container: textLayer,
+            viewport,
+            isOffscreenCanvasSupported: !!window.OffscreenCanvas,
+          });
+          await task.promise;
+        } catch (e) {
+          console.error('文本层渲染失败:', e);
+        }
+
+        // 渲染期间 wrapper 已被回收或已滚远 → 回收（修复空白页）
+        if (!wrapper.isConnected || isFarFromView(pageNum)) disposePage(pageNum);
+
+        // 选图模式: 新渲染的页面自动绘制图片热区
+        if (imageSelectActive && !isFarFromView(pageNum)) {
+          drawImageHotspots(wrapper, pageNum);
+        }
       } catch (e) {
-        console.error('文本层渲染失败:', e);
+        if (rendered.get(pageNum) === wrapper) disposePage(pageNum);
+        throw e;
       }
-
-      // 渲染期间用户滚远了 → 立即回收
-      if (isFarFromView(pageNum)) disposePage(pageNum);
-
-      // 选图模式: 新渲染的页面自动绘制图片热区
-      if (imageSelectActive && !isFarFromView(pageNum)) {
-        drawImageHotspots(wrapper, pageNum);
-      }
-    } catch (e) {
-      disposePage(pageNum);
-      throw e;
+    } finally {
+      rendering.delete(pageNum);
     }
   }
 
@@ -260,12 +284,16 @@ const PdfViewer = (() => {
 
   // 缩放后重建布局并渲染视口附近页面，保持阅读位置
   async function reRender() {
+    // v2.4.2: 代次自增，作废所有在途渲染；清空渲染集，让新布局可重新调度
+    const gen = ++renderGeneration;
+    rendering.clear();
     const anchorPage = currentPage;
     // 锚点页面在当前视口内的相对位置
     const anchorTop = pageOffsets[anchorPage - 1];
     const anchorOffset = viewerEl.scrollTop - anchorTop;
 
     await computePageLayout();
+    if (gen !== renderGeneration) return; // 期间有更新的 reRender，本次作废
     rebuildSpacer();
     rendered.clear();
     viewerEl.innerHTML = '';
@@ -634,7 +662,15 @@ const PdfViewer = (() => {
     viewerEl.addEventListener('wheel', (e) => {
       if (e.ctrlKey) {
         e.preventDefault();
-        if (e.deltaY < 0) zoomIn(); else zoomOut();
+        if (!pdfDoc || isLoading) return;
+        zoomMode = 'manual';
+        // v2.4.2: 连续滚轮 tick 累积缩放值，reRender 防抖 150ms，避免每次都全文档重排
+        scale = (e.deltaY < 0)
+          ? Math.min(scale * 1.2, MAX_SCALE)
+          : Math.max(scale / 1.2, MIN_SCALE);
+        updateToolbar();
+        clearTimeout(wheelZoomTimer);
+        wheelZoomTimer = setTimeout(() => reRender(), 150);
       }
     }, { passive: false });
 
@@ -740,16 +776,19 @@ const PdfViewer = (() => {
       const row = Math.floor(i / cols);
       const x = gap + col * (cellW + gap);
       const y = gap + row * (cellH + gap);
-      // 白底 + 页面渲染
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(x, y, cellW, cellH);
+      // v2.4.2 修复：pdf.js 每次 page.render 都会把整张共享画布刷白（beginDrawing
+      // fillRect(0,0,width,height)），导致前几页被后一页覆盖、最终只剩每批最后一页。
+      // 改为：每页先渲染到自己的小画布，再 drawImage 贴到网格画布上。
+      const cellCanvas = document.createElement('canvas');
+      cellCanvas.width = cellW;
+      cellCanvas.height = cellH;
+      const cellCtx = cellCanvas.getContext('2d');
+      cellCtx.fillStyle = '#ffffff';
+      cellCtx.fillRect(0, 0, cellW, cellH);
       try {
-        // 用户T ∘ viewportT：viewportT 把页面顶部映射到 canvas y=0，
-        // 页面底部映射到 y=vp.height。用 translate 让页面顶部落在格子顶部，
-        // 再补偿 vp.height 与 cellH 的差使页面底部对齐格子底部。
-        const ty = y + (cellH - vp.height);
-        await page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, x, ty] }).promise;
+        await page.render({ canvasContext: cellCtx, viewport: vp }).promise;
       } catch (e) { /* 单格失败不影响整体 */ }
+      ctx.drawImage(cellCanvas, x, y);
       // 页码角标
       ctx.fillStyle = 'rgba(37, 99, 235, 0.9)';
       ctx.fillRect(x, y, 44, 20);
