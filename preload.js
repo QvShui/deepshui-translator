@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('deepshui', {
   // 保存有道配置
   saveConfig: (cfg) => ipcRenderer.invoke('save-config', cfg),
 
+  // 会话持久化（v2.5.0）：按文档指纹保存/恢复各模型的对话会话
+  loadSessions: (docKey) => ipcRenderer.invoke('load-sessions', docKey),
+  saveSessions: (docKey, payload) => ipcRenderer.invoke('save-sessions', docKey, payload),
+
   // AI 引擎
   aiModels: (provider, apiKey) => ipcRenderer.invoke('ai-models', { provider, apiKey }),
   aiModelsCache: (provider) => ipcRenderer.invoke('ai-models-cache', { provider }),

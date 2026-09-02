@@ -54,12 +54,26 @@ const PdfViewer = (() => {
   let onPdfLoaded = null;
 
   // ── 加载 PDF ─────────────────────────────
+  // 计算文档指纹（v2.5.0）：SHA-256，用于把会话持久化绑定到具体文档
+  async function computeDocKey(data) {
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', data);
+      return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+      // 无 Web Crypto 时兜底：文件名 + 字节长度
+      const len = (data && (data.byteLength || data.length)) || 0;
+      return 'fallback-' + String(fileName || '') + '-' + len;
+    }
+  }
+
   async function loadPdf(data, name) {
     if (isLoading) return;
     isLoading = true;
     renderGeneration++;   // 使上一份文档的在途渲染全部作废
     rendering.clear();
     try {
+      // 先算指纹再交给 pdf.js（getDocument 可能把底层 buffer transfer 给 worker）
+      const docKey = await computeDocKey(data);
       pdfDoc = await pdfjsLib.getDocument({ data }).promise;
       fileName = name;
       document.title = `${name} - deepshui-translator`;
@@ -92,8 +106,8 @@ const PdfViewer = (() => {
       updateToolbar();
       await renderVisiblePages(true);
 
-      // 通知外部（拖拽/对话框打开都触发）
-      if (onPdfLoaded) onPdfLoaded(fileName);
+      // 通知外部（拖拽/对话框打开都触发），携带文档指纹用于会话持久化
+      if (onPdfLoaded) onPdfLoaded({ name: fileName, docKey });
     } catch (e) {
       console.error(e);
       alert('PDF 加载失败: ' + e.message);

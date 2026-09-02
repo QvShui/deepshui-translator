@@ -168,6 +168,75 @@
   const sessionStore = new Map();
   let currentSessionKey = null;
 
+  // 会话持久化（v2.5.0）：按文档指纹存到磁盘，重新打开同一篇论文可回到之前的会话
+  let currentDocKey = null;
+  let persistTimer = null;
+
+  // Map -> 可 JSON 化的快照（sentImageMap 是 Map，需先转数组）
+  function serializeSession(s) {
+    if (!s) return null;
+    return {
+      askHistory: s.askHistory || [],
+      fullText: s.fullText || '',
+      sentImageMap: [...((s.sentImageMap instanceof Map) ? s.sentImageMap : new Map()).entries()],
+      askImages: s.askImages || [],
+      raw: s.raw || '',
+    };
+  }
+  function deserializeSession(o) {
+    if (!o) return null;
+    return {
+      askHistory: Array.isArray(o.askHistory) ? o.askHistory : [],
+      fullText: typeof o.fullText === 'string' ? o.fullText : '',
+      sentImageMap: new Map(Array.isArray(o.sentImageMap) ? o.sentImageMap : []),
+      askImages: Array.isArray(o.askImages) ? o.askImages : [],
+      raw: typeof o.raw === 'string' ? o.raw : '',
+    };
+  }
+
+  async function loadDocSessions(docKey) {
+    if (!docKey) return null;
+    try { return await window.deepshui.loadSessions(docKey); } catch { return null; }
+  }
+  async function persistNow() {
+    if (!currentDocKey) return;
+    // 先取当前模型的实时状态写入 store（否则只聊一个模型、从未切换时会漏存）
+    if (currentSessionKey) {
+      sessionStore.set(currentSessionKey, {
+        askHistory, fullText, sentImageMap, askImages,
+        raw: aiAskContent.__raw || '',
+      });
+    }
+    const sessions = {};
+    for (const [k, s] of sessionStore.entries()) sessions[k] = serializeSession(s);
+    try { await window.deepshui.saveSessions(currentDocKey, { version: 1, sessions }); } catch { /* 写盘失败不影响主流程 */ }
+  }
+  function schedulePersist() {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(persistNow, 400);
+  }
+
+  // 恢复某模型的会话到界面；返回是否成功（sessionStore 无该模型会话时 false）
+  function restoreSessionKey(key) {
+    const s = key ? sessionStore.get(key) : null;
+    if (!s) return false;
+    askHistory = s.askHistory;
+    fullText = s.fullText;
+    sentImageMap = s.sentImageMap;
+    askImages = s.askImages;
+    askCurrentAnswer = '';
+    aiAskContent.__raw = s.raw;
+    renderMarkdownTo(aiAskContent, s.raw);  // 含已发图片的 alt 标记回填
+    aiAskContent.scrollTop = aiAskContent.scrollHeight;
+    renderAskImages();
+    const rounds = s.askHistory.filter(m => m.role === 'user').length;
+    aiAskStatus.textContent = `已恢复该模型的会话（${rounds} 轮历史）`;
+    setTimeout(() => {
+      if (aiAskStatus.textContent.startsWith('已恢复')) aiAskStatus.textContent = '';
+    }, 3000);
+    return true;
+  }
+
   // 本次运行中产生过 AI 问答的模型（顶部快速切换下拉的数据源，v2.3.3）
   const usedAskModels = new Map();  // 'provider/model' -> { provider, model }
   const PROVIDER_LABELS = { deepseek: 'DeepSeek', qwen: '千问', doubao: '豆包', kimi: 'Kimi' };
@@ -512,6 +581,7 @@
           askHistory.push({ role: 'assistant', content: askCurrentAnswer });
         }
         askCurrentAnswer = '';
+        schedulePersist();  // v2.5.0: 本轮结束后即时（防抖）落盘
         break;
       case 'error': {
         askTurnActive = false;
@@ -526,6 +596,7 @@
           if (askHistory.length && askHistory[askHistory.length - 1].role === 'user') {
             askHistory.pop();
           }
+          schedulePersist();  // v2.5.0: 失败后历史有变化 → 落盘
         }
         askCurrentAnswer = '';
         break;
@@ -617,6 +688,7 @@
       if (askHistory.length && askHistory[askHistory.length - 1].role === 'user') {
         askHistory.pop();
       }
+      schedulePersist();  // v2.5.0: 取消后历史有变化 → 落盘
       aiAskStatus.textContent = '';
       aiAskStatus.className = 'ai-status';
       aiAskSend.disabled = false;
@@ -979,25 +1051,54 @@
   // PDF 打开后：提取全文（带进度）→ 重置问答历史 → 自动总结（若 AI 可用）
   async function handlePdfOpened(opts) {
     const keepSessions = !!(opts && opts.keepSessions);
-    if (!keepSessions) sessionStore.clear();  // 真·新文档: 清空所有模型会话
     const myTurn = ++pdfOpenCounter;
-
-    // v2.4.2: 真·新文档先清空旧全文，早退路径（超页数/渲染失败/提取失败）不会残留上一份 PDF
-    if (!keepSessions) fullText = '';
-
-    // 新文档: 页数输入框锁定实际页数(持久化); 清空已发送图片缓存
-    clampSummaryInputsToDoc();
-    sentImageMap.clear();
-
-    // 重置问答历史（新文档新会话）
-    askHistory = [];
-    askCurrentAnswer = '';
-    clearAiContent(aiAskContent);
-    aiAskStatus.textContent = '';
-
+    if (!keepSessions && opts && opts.docKey) currentDocKey = opts.docKey;
     const ai = currentConfig.ai || {};
+    const curKey = ai.model ? `${ai.provider || 'deepseek'}/${ai.model}` : null;
+
     if (!keepSessions) {
-      currentSessionKey = ai.model ? `${ai.provider || 'deepseek'}/${ai.model}` : null;
+      // v2.4.2: 真·新文档先清空旧全文，早退路径不会残留上一份 PDF
+      fullText = '';
+      // v2.5.0: 真·新文档——从磁盘加载该文档持久化的各模型会话
+      const loaded = (opts && opts.docKey) ? await loadDocSessions(opts.docKey) : null;
+      sessionStore.clear();
+      if (loaded && loaded.sessions && typeof loaded.sessions === 'object') {
+        for (const [k, v] of Object.entries(loaded.sessions)) {
+          const snap = deserializeSession(v);
+          if (snap) sessionStore.set(k, snap);
+        }
+        // 让顶部「AI 模型」快速切换下拉包含该文档曾经用过的所有模型，便于切回其它模型会话
+        let addedModels = false;
+        for (const k of sessionStore.keys()) {
+          const idx = k.indexOf('/');
+          if (idx > 0 && !usedAskModels.has(k)) {
+            usedAskModels.set(k, { provider: k.slice(0, idx), model: k.slice(idx + 1) });
+            addedModels = true;
+          }
+        }
+        if (addedModels) rebuildModelSwitch();
+      }
+      currentSessionKey = curKey;
+      clampSummaryInputsToDoc();
+      sentImageMap.clear();
+      askCurrentAnswer = '';
+
+      // 当前模型存在已存会话 → 回到之前的会话状态，跳过自动总结
+      if (curKey && restoreSessionKey(curKey)) {
+        aiAsk.classList.remove('hidden');
+        return;
+      }
+      askHistory = [];
+      clearAiContent(aiAskContent);
+      aiAskStatus.textContent = '';
+    } else {
+      // 会话切换的“开新会话”路径：清状态后重新总结
+      clampSummaryInputsToDoc();
+      sentImageMap.clear();
+      askCurrentAnswer = '';
+      askHistory = [];
+      clearAiContent(aiAskContent);
+      aiAskStatus.textContent = '';
     }
     // 防御: 起始/结束页锁定到实际页数（旧配置可能超出新文档，getPage 会抛异常）
     const pc = PdfViewer.pageCount || 1;
@@ -1431,26 +1532,10 @@
         askHistory, fullText, sentImageMap, askImages,
         raw: aiAskContent.__raw || '',
       });
+      schedulePersist();
     }
     // 2. 恢复目标会话（策略 A：原样恢复，不补充上下文）
-    const s = sessionStore.get(newKey);
-    if (s) {
-      askHistory = s.askHistory;
-      fullText = s.fullText;
-      sentImageMap = s.sentImageMap;
-      askImages = s.askImages;
-      askCurrentAnswer = '';
-      aiAskContent.__raw = s.raw;
-      renderMarkdownTo(aiAskContent, s.raw);  // 含已发图片的 alt 标记回填
-      aiAskContent.scrollTop = aiAskContent.scrollHeight;
-      renderAskImages();
-      const rounds = s.askHistory.filter(m => m.role === 'user').length;
-      aiAskStatus.textContent = `已恢复该模型的会话（${rounds} 轮历史）`;
-      setTimeout(() => {
-        if (aiAskStatus.textContent.startsWith('已恢复')) aiAskStatus.textContent = '';
-      }, 3000);
-      return;
-    }
+    if (restoreSessionKey(newKey)) return;
     // 3. 无历史 → 开新会话：全新状态，复用文档打开流程自动总结
     //    （handlePdfOpened 会重建 askHistory/fullText/显示，并 bump pdfOpenCounter 打断旧渲染）
     askImages = [];
@@ -1768,6 +1853,7 @@
     aiAskBox.style.height = 'auto';
     aiAskBox.disabled = false;
     aiAskSend.disabled = false;
+    schedulePersist();  // v2.5.0: 重置后（清空历史/图片）落盘
 
     const ai = currentConfig.ai || {};
     if (hasAiKey() && ai.model && ai.showAsk && isCurrentModelMultimodal() && PdfViewer.pageCount) {
@@ -1899,6 +1985,12 @@
         closeSettings();
       }
     }
+  });
+
+  // 退出前把最近的会话改动落盘（防抖未来得及触发时兜底）
+  window.addEventListener('beforeunload', () => {
+    clearTimeout(persistTimer);
+    persistNow();
   });
 
   // ── 初始化 ───────────────────────────────

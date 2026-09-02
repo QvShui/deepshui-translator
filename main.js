@@ -103,6 +103,33 @@ function acceptLicense() {
   return saveConfig(cfg);
 }
 
+// ── AI 会话持久化（v2.5.0）─────────────────────────────────
+// 按文档（PDF 的 SHA-256 指纹）把每个模型的对话会话存到磁盘，
+// 重新打开同一篇论文时恢复之前的会话状态。
+// 文件: userData/sessions/<docKey>.json，形如 { version, sessions: { 'provider/model': {...} } }
+const SESSION_DOCKEY_RE = /^[0-9a-f]{64}$/;
+
+function getSessionsDir() {
+  return path.join(app.getPath('userData'), 'sessions');
+}
+function getSessionPath(docKey) {
+  return path.join(getSessionsDir(), `${docKey}.json`);
+}
+function loadSessions(docKey) {
+  if (typeof docKey !== 'string' || !SESSION_DOCKEY_RE.test(docKey)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(getSessionPath(docKey), 'utf8'));
+  } catch { return null; }
+}
+function saveSessions(docKey, payload) {
+  if (typeof docKey !== 'string' || !SESSION_DOCKEY_RE.test(docKey)) return false;
+  try {
+    fs.mkdirSync(getSessionsDir(), { recursive: true });
+    fs.writeFileSync(getSessionPath(docKey), JSON.stringify(payload), { mode: 0o600 });
+    return true;
+  } catch { return false; }
+}
+
 // ── 模型列表磁盘缓存（v2.3.1）──────────────────────────────
 // 策略: 每个提供商已拉取（含探测）过的模型存到磁盘，切换提供商直接读缓存，
 //       只有用户主动点「刷新」才重新拉取更新。
@@ -803,6 +830,14 @@ ipcMain.handle('get-config', async () => {
 
 ipcMain.handle('save-config', async (event, cfg) => {
   return saveConfig(cfg);
+});
+
+// ── 会话持久化 IPC（v2.5.0）───────────────────────────────
+ipcMain.handle('load-sessions', async (event, docKey) => {
+  return loadSessions(docKey);
+});
+ipcMain.handle('save-sessions', async (event, docKey, payload) => {
+  return saveSessions(docKey, payload);
 });
 
 // ── 许可协议 IPC（v2.4.1）────────────────────────────────
